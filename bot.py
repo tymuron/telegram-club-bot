@@ -1,5 +1,7 @@
 import os
 import logging
+import threading
+from flask import Flask
 from dotenv import load_dotenv
 from telegram import Update, LabeledPrice, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, PreCheckoutQueryHandler, MessageHandler, filters, CallbackQueryHandler
@@ -311,6 +313,22 @@ def main() -> None:
     # application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
 
     print("Bot is running with Menus...")
+    
+    # Start Dummy Web Server for Render
+    app = Flask(__name__)
+
+    @app.route('/')
+    def health_check():
+        return "Bot is alive!", 200
+
+    def run_flask():
+        # Render provides PORT in env, default to 10000
+        port = int(os.environ.get("PORT", 10000))
+        app.run(host="0.0.0.0", port=port)
+
+    # Run Flask in a separate thread so it doesn't block the bot
+    threading.Thread(target=run_flask, daemon=True).start()
+
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
