@@ -242,6 +242,23 @@ async def send_invoice(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None
         logger.error(f"Error sending invoice: {e}")
         await context.bot.send_message(chat_id, f"⚠️ Ошибка при создании счета: {e}")
 
+async def leads(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """(Admin Only) Sends the waitlist file."""
+    user_id = update.effective_user.id
+    
+    # Security check: Only allow the Admin to see this
+    if str(user_id) != str(ADMIN_ID):
+        return  # Ignore strangers
+
+    if not os.path.exists("waitlist.txt"):
+        await update.message.reply_text("📭 Список пока пуст.")
+        return
+
+    await update.message.reply_document(
+        document=open("waitlist.txt", "rb"),
+        caption="📂 Вот ваш список ожидания."
+    )
+
 async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.pre_checkout_query
     if query.invoice_payload != "Club-Subscription":
@@ -287,6 +304,7 @@ def main() -> None:
 
     # Handlers
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("leads", leads))  # New Admin Command
     application.add_handler(CallbackQueryHandler(menu_callback))
     # DISABLE PAYMENTS FOR NOW
     # application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
