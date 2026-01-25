@@ -13,7 +13,8 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN")
 PAYMENT_PROVIDER_TOKEN_INTL = os.getenv("PAYMENT_PROVIDER_TOKEN_INTL")
-WAITLIST_LINK = os.getenv("WAITLIST_LINK")
+PAYMENT_PROVIDER_TOKEN_INTL = os.getenv("PAYMENT_PROVIDER_TOKEN_INTL")
+SERVICE_BOT_LINK = os.getenv("SERVICE_BOT_LINK") # Link to VipSub/Nemiling
 WAITLIST_LINK = os.getenv("WAITLIST_LINK")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 ADMIN_ID = os.getenv("ADMIN_ID")
@@ -111,10 +112,17 @@ def get_about_menu():
     return InlineKeyboardMarkup(keyboard)
 
 def get_join_menu():
-    keyboard = [
-        [InlineKeyboardButton("🙋‍♀️ Хочу в клуб! (Лист ожидания)", callback_data="join_waitlist")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="main")],
-    ]
+    keyboard = []
+    
+    # Priority 1: Service Bot Link (Prodamus/VipSub)
+    if SERVICE_BOT_LINK:
+         keyboard.append([InlineKeyboardButton("💳 Оплатить участие (Карта РФ / Зарубеж)", url=SERVICE_BOT_LINK)])
+    
+    # Priority 2: Waitlist (Fallback)
+    else:
+        keyboard.append([InlineKeyboardButton("🙋‍♀️ Хочу в клуб! (Лист ожидания)", callback_data="join_waitlist")])
+
+    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="main")])
     return InlineKeyboardMarkup(keyboard)
 
 def get_cabinet_menu():
