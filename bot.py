@@ -87,6 +87,12 @@ TEXT_HELP = (
     "Если у вас возникли вопросы или проблемы с оплатой, пожалуйста, напишите нам в поддержку: @tymuron"
 )
 
+TEXT_SUCCESS = (
+    "<b>🎉 Оплата прошла успешно!</b>\n\n"
+    "Добро пожаловать в Клуб «Точка опоры».\n"
+    "Ваша ссылка для входа готова."
+)
+
 # --- KEYBOARDS ---
 def get_main_menu():
     keyboard = [
@@ -261,6 +267,16 @@ async def leads(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         caption="📂 Вот ваш список ожидания."
     )
 
+async def testpay(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """(Admin Only) Sends a test invoice."""
+    user_id = update.effective_user.id
+    
+    # Security check: Only allow the Admin
+    if str(user_id) != str(ADMIN_ID):
+        return
+
+    await send_invoice(context, update.effective_chat.id)
+
 async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.pre_checkout_query
     if query.invoice_payload != "Club-Subscription":
@@ -308,9 +324,11 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("leads", leads))  # New Admin Command
     application.add_handler(CallbackQueryHandler(menu_callback))
-    # DISABLE PAYMENTS FOR NOW
-    # application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
-    # application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
+    application.add_handler(CommandHandler("testpay", testpay))  # New Test Command
+    
+    # Payment Handlers
+    application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
+    application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
 
     print("Bot is running with Menus...")
     
