@@ -4,12 +4,13 @@ import re
 import logging
 import sys
 from dotenv import load_dotenv
-from telegram import Bot
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import Forbidden, BadRequest
 
 # Configuration
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+PAYMENT_LINK = os.getenv("PAYMENT_LINK")
 WAITLIST_FILE = "waitlist.txt"
 
 # Logging functionality
@@ -55,7 +56,23 @@ async def broadcast(message_text):
 
     for user_id in user_ids:
         try:
-            await bot.send_message(chat_id=user_id, text=message_text, parse_mode="HTML")
+            # Create Keyboard with Payment Link (includes user ID for tracking)
+            reply_markup = None
+            if PAYMENT_LINK:
+                # Append user ID to URL for webhook matching
+                separator = "&" if "?" in PAYMENT_LINK else "?"
+                tracked_url = f"{PAYMENT_LINK}{separator}tg_id={user_id}"
+                keyboard = [
+                    [InlineKeyboardButton("💎 Вступить в Клуб", url=tracked_url)]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await bot.send_message(
+                chat_id=user_id, 
+                text=message_text, 
+                parse_mode="HTML",
+                reply_markup=reply_markup
+            )
             success_count += 1
             # Rate limit safety (Telegram allows ~30/sec, but let's be safe with 20/sec)
             await asyncio.sleep(0.05) 
