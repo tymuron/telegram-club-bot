@@ -1,0 +1,35 @@
+{
+    "828568605": {
+        "chat_id": 828568605,
+        "email": null,
+        "name": "Анна Paradigma (@anna_paradigma)",
+        "paid_at": "2026-01-28T12:00:00",
+        "expires_at": "2026-02-27T12:00:00",
+        "status": "active",
+        "reminder_sent": false,
+        "renewed_count": 1,
+        "notes": "Paid before webhook system was active"
+    },
+    "1069600264": {
+        "chat_id": 1069600264,
+        "email": null,
+        "name": "Natasha Tukmacheva (@natasha_tukmacheva)",
+        "paid_at": "2026-01-28T12:00:00",
+        "expires_at": "2026-02-27T12:00:00",
+        "status": "active",
+        "reminder_sent": false,
+        "renewed_count": 1,
+        "notes": "Paid before webhook system was active"
+    },
+    "259622921": {
+        "chat_id": 259622921,
+        "email": null,
+        "name": "Di💠 None (@Di_Ala)",
+        "paid_at": "2026-01-28T12:00:00",
+        "expires_at": "2026-02-27T12:00:00",
+        "status": "active",
+        "reminder_sent": false,
+        "renewed_count": 1,
+        "notes": "Paid before webhook system was active"
+    }
+}
