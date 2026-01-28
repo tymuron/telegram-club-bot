@@ -109,5 +109,11 @@
     "name": "Екатерина",
     "status": "active",
     "manual_restore": true
+  },
+  "162903116": {
+    "chat_id": 162903116,
+    "name": "Ксения (kseniya_oprio)",
+    "status": "active",
+    "manual_restore": true
   }
 }
