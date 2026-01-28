@@ -559,30 +559,9 @@ from broadcast import check_campaign_job
 
 def run():
     """Runs the bot."""
-    # Start Webhook Server (Render requires a bound port)
-    if not os.environ.get("PORT"):
-        logger.warning("No PORT in env, assuming local run w/o webhook server or manual start")
-    else:
-        app = Flask(__name__)
-        @app.route(WEBHOOK_PATH, methods=['POST'])
-        def webhook():
-             # ... (existing webhook logic) ...
-             return jsonify({"status": "ok"}), 200
-
-        def run_flask():
-            port = int(os.environ.get("PORT", 10000))
-            logger.info(f"🚀 STARTING FLASK ON PORT: {port}")
-            try:
-                # IMPORTANT: use_reloader=False is required when running in a thread!
-                app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
-            except Exception as e:
-                logger.error(f"❌ FLASK FAILED TO START: {e}")
-
-        # Run Flask in a separate thread
-        t = threading.Thread(target=run_flask, daemon=True)
-        t.start()
-        logger.info(f"✅ Flask thread started: {t.is_alive()}")
-
+    # Check if we are on Render (PORT exists)
+    port = os.environ.get("PORT")
+    
     # Setup Scheduler for daily checks (using BackgroundScheduler)
     scheduler = BackgroundScheduler()
     
@@ -602,14 +581,43 @@ def run():
     scheduler.start()
     logger.info("📅 Scheduler started (Reminders 10:00, Expiries 10:30, Campaign every 1min)")
 
-    try:
-        application.run_polling(allowed_updates=Update.ALL_TYPES, close_loop=False)
-    except Exception as e:
-        logger.error(f"❌ FATAL ERROR in run_polling: {e}", exc_info=True)
-        # Keep process alive briefly to ensure log is flushed
-        import time
-        time.sleep(5)
-        raise e
+    # Define Bot Polling Function
+    def run_telegram_bot():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        logger.info("🤖 Starting Telegram Bot Polling...")
+        try:
+             # Create a new application instance if needed, or reuse global
+             # Note: run_polling is blocking, so we run it here in this thread
+             application.run_polling(allowed_updates=Update.ALL_TYPES, close_loop=False)
+        except Exception as e:
+            logger.error(f"❌ FATAL ERROR in Bot Polling: {e}", exc_info=True)
+
+    # Start Telegram Bot in a separate thread
+    bot_thread = threading.Thread(target=run_telegram_bot, daemon=True)
+    bot_thread.start()
+    
+    if port:
+        # ON RENDER: Run Flask in Main Thread (Blocking)
+        logger.info(f"🚀 STARTING FLASK ON MAIN THREAD PORT: {port}")
+        app = Flask(__name__)
+        @app.route(WEBHOOK_PATH, methods=['POST'])
+        def webhook():
+             # ... (existing webhook logic copied/referenced if needed, 
+             # but actually we can just return OK since we use polling)
+             return jsonify({"status": "ok"}), 200
+             
+        # Just a health check endpoint
+        @app.route("/", methods=['GET'])
+        def health_check():
+            return "Bot is running", 200
+
+        # Run Flask (Blocks forever)
+        app.run(host="0.0.0.0", port=int(port), debug=False, use_reloader=False)
+    else:
+        # LOCAL: Just wait forever (since bot is in thread)
+        logger.warning("⚠️ No PORT found. Running locally. Press Ctrl+C to stop.")
+        bot_thread.join()
 
 if __name__ == "__main__":
-    main()
+    run()
