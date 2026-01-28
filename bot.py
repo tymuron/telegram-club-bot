@@ -7,7 +7,7 @@ from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 from telegram import Update, LabeledPrice, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, PreCheckoutQueryHandler, MessageHandler, filters, CallbackQueryHandler
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.schedulers.background import BackgroundScheduler
 
 # Import our subscription manager
 import subscription_manager as sm
@@ -498,10 +498,17 @@ def main() -> None:
     # Run Flask in a separate thread
     threading.Thread(target=run_flask, daemon=True).start()
 
-    # Setup Scheduler for daily checks
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(check_reminders_job, 'cron', hour=10, minute=0)  # 10:00 AM daily
-    scheduler.add_job(check_expiries_job, 'cron', hour=10, minute=30)  # 10:30 AM daily
+    # Setup Scheduler for daily checks (using BackgroundScheduler)
+    scheduler = BackgroundScheduler()
+    
+    # Wrapper to run async jobs from background scheduler
+    def run_async_job(coro_func):
+        def wrapper():
+            asyncio.run(coro_func())
+        return wrapper
+    
+    scheduler.add_job(run_async_job(check_reminders_job), 'cron', hour=10, minute=0)  # 10:00 AM daily
+    scheduler.add_job(run_async_job(check_expiries_job), 'cron', hour=10, minute=30)  # 10:30 AM daily
     scheduler.start()
     logger.info("📅 Scheduler started (reminders at 10:00, expiries at 10:30)")
 
