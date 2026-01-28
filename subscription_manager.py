@@ -116,6 +116,10 @@ def get_all_active_subscribers() -> List[Dict]:
     subs = load_subscribers()
     return [s for s in subs.values() if s.get("status") == "active"]
 
+def get_all_subscribers() -> Dict:
+    """Get all subscribers (raw dict for API)."""
+    return load_subscribers()
+
 # --- Webhook Payload Parser ---
 def parse_getcourse_webhook(data: dict) -> Optional[Dict]:
     """
