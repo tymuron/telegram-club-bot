@@ -15,7 +15,6 @@ from typing import Optional, Dict, List
 logger = logging.getLogger(__name__)
 
 # Configuration
-# Configuration
 # Use persistent disk path on Render if available, else local file
 if os.path.exists("/var/data"):
     DATA_DIR = "/var/data"
@@ -23,6 +22,15 @@ else:
     DATA_DIR = "."
 
 SUBSCRIBERS_FILE = os.path.join(DATA_DIR, "subscribers.json")
+
+# On first run, copy repo's subscribers.json to persistent storage if not exists
+if DATA_DIR == "/var/data" and not os.path.exists(SUBSCRIBERS_FILE):
+    REPO_SUBSCRIBERS = "subscribers.json"  # File in repo root
+    if os.path.exists(REPO_SUBSCRIBERS):
+        import shutil
+        shutil.copy(REPO_SUBSCRIBERS, SUBSCRIBERS_FILE)
+        logger.info(f"📋 Copied initial subscribers from repo to {SUBSCRIBERS_FILE}")
+
 REMINDER_DAY = 27  # Days after payment to send reminder
 EXPIRY_DAY = 30    # Days after payment when subscription expires
 GRACE_PERIOD = 3   # Extra days before kicking
