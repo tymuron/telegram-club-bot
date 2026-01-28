@@ -586,8 +586,20 @@ def run():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         logger.info("🤖 Starting Telegram Bot Polling...")
+        
+        # Initialize Application
+        global application
+        application = ApplicationBuilder().token(BOT_TOKEN).build()
+
+        # --- HANDLERS ---
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("pay", pay_command)) # Hidden command for testing
+        application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
+        application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
+        application.add_handler(CallbackQueryHandler(menu_callback))
+        # ----------------
+
         try:
-             # Create a new application instance if needed, or reuse global
              # Note: run_polling is blocking, so we run it here in this thread
              application.run_polling(allowed_updates=Update.ALL_TYPES, close_loop=False)
         except Exception as e:
