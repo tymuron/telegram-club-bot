@@ -595,8 +595,14 @@ def run():
     scheduler.start()
     logger.info("📅 Scheduler started (Reminders 10:00, Expiries 10:30, Campaign every 1min)")
 
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    try:
+        application.run_polling(allowed_updates=Update.ALL_TYPES, close_loop=False)
+    except Exception as e:
+        logger.error(f"❌ FATAL ERROR in run_polling: {e}", exc_info=True)
+        # Keep process alive briefly to ensure log is flushed
+        import time
+        time.sleep(5)
+        raise e
 
 if __name__ == "__main__":
     main()
-
