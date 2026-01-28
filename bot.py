@@ -6,7 +6,7 @@ from datetime import datetime
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 from telegram import Update, LabeledPrice, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes, PreCheckoutQueryHandler, MessageHandler, filters, CallbackQueryHandler
+from telegram.ext import Application, CommandHandler, ContextTypes, PreCheckoutQueryHandler, MessageHandler, filters, CallbackQueryHandler, ApplicationBuilder
 from apscheduler.schedulers.background import BackgroundScheduler
 
 # Import our subscription manager
