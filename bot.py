@@ -600,12 +600,87 @@ def run():
     if port:
         # ON RENDER: Run Flask in Main Thread (Blocking)
         logger.info(f"🚀 STARTING FLASK ON MAIN THREAD PORT: {port}")
+        
+        # Determine Webhook Path
+        WEBHOOK_PATH = f"/webhook/{BOT_TOKEN}"
+        
         app = Flask(__name__)
+        
         @app.route(WEBHOOK_PATH, methods=['POST'])
         def webhook():
-             # ... (existing webhook logic copied/referenced if needed, 
-             # but actually we can just return OK since we use polling)
-             return jsonify({"status": "ok"}), 200
+             """Handle incoming GetCourse payments."""
+             try:
+                # We need to manually parse the form-data from GetCourse
+                # GetCourse sends: ID, status, uid, phone, email, name, etc.
+                # We expect custom field 'tg_id' passed in link
+                
+                # Check query params for tg_id (we add it to payment link)
+                chat_id = request.args.get('tg_id')
+                
+                # Fallback: check body
+                if not chat_id and request.form.get('tg_id'):
+                    chat_id = request.form.get('tg_id')
+                
+                if not chat_id:
+                     # Just return OK for general status updates that don't concern us
+                     return jsonify({"status": "ignored", "reason": "no tg_id"}), 200
+
+                # Data from GetCourse
+                status = request.form.get('status', '').lower() # paid, completed
+                email = request.form.get('email')
+                name = request.form.get('name')
+                
+                logger.info(f"💰 Payment Webhook: ID={chat_id} Status={status} Email={email}")
+                
+                if status in ['completed', 'paid', 'оплачен', 'завершен', 'success']:
+                    # 1. Add to subscribers
+                    sm.add_subscriber(
+                        chat_id=int(chat_id),
+                        email=email,
+                        name=name
+                    )
+
+                    # 2. Send Telegram Invite (using global application)
+                    async def send_invite():
+                        try:
+                            invite = await application.bot.create_chat_invite_link(
+                                chat_id=CHANNEL_ID,
+                                member_limit=1,
+                                name=f"User {chat_id}"
+                            )
+                            keyboard = [[InlineKeyboardButton("🚪 Войти в Клуб", url=invite.invite_link)]]
+                            await application.bot.send_message(
+                                chat_id=chat_id,
+                                text=TEXT_SUCCESS,
+                                parse_mode="HTML",
+                                reply_markup=InlineKeyboardMarkup(keyboard)
+                            )
+                            # Notify Admin
+                            if ADMIN_ID:
+                                await application.bot.send_message(
+                                    chat_id=ADMIN_ID,
+                                    text=f"💰 New Payment!\n{name}\nID: {chat_id}"
+                                )
+                        except Exception as e:
+                            logger.error(f"Failed to send invite: {e}")
+
+                    # Run async send in background thread loop? 
+                    # Actually, we can just fire-and-forget logic if strictly necessary, 
+                    # but since we have a running loop in another thread, we should use run_coroutine_threadsafe if possible.
+                    # SIMPLER: Create a temporary loop for this thread just to send.
+                    # OR EVEN SIMPLER: The 'sm.add_subscriber' is persistent. The user will be added. 
+                    # The message sending is a bonus.
+                    
+                    # Hack to run async in Flask thread:
+                    loop = asyncio.new_event_loop()
+                    loop.run_until_complete(send_invite())
+                    loop.close()
+
+                return jsonify({"status": "ok"}), 200
+
+             except Exception as e:
+                logger.error(f"Webhook error: {e}")
+                return jsonify({"status": "error"}), 500
              
         # Just a health check endpoint
         @app.route("/", methods=['GET'])
