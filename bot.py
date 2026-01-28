@@ -155,8 +155,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     print(f"!!! WELCOME: {user.first_name} ({username}) joined the waitlist! !!!")
 
     # Save to file
-    with open("waitlist.txt", "a", encoding="utf-8") as f:
-        f.write(f"{user.first_name} {user.last_name} ({username}) - ID: {user.id}\n")
+    waitlist_path = "/var/data/waitlist.txt" if os.path.exists("/var/data") else "waitlist.txt"
+    try:
+        with open(waitlist_path, "a", encoding="utf-8") as f:
+            f.write(f"{user.first_name} {user.last_name} ({username}) - ID: {user.id}\n")
+    except Exception as e:
+        logger.error(f"Failed to save to waitlist: {e}")
 
     # Send Notification to Admin (Persistence)
     if ADMIN_ID:

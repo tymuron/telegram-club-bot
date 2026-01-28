@@ -14,8 +14,18 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PAYMENT_LINK = os.getenv("PAYMENT_LINK")
 RENDER_API_URL = "https://telegram-club-bot-z7xk.onrender.com/api/subscribers"
-WAITLIST_FILE = "waitlist.txt"
-SUBSCRIBERS_FILE = "subscribers.json"
+# Check persistent storage first (Render)
+if os.path.exists("/var/data"):
+    DATA_DIR = "/var/data"
+else:
+    DATA_DIR = "."
+
+WAITLIST_FILE = os.path.join(DATA_DIR, "waitlist.txt")
+# If waitlist is not on disk (first run), try loading from root
+if not os.path.exists(WAITLIST_FILE) and os.path.exists("waitlist.txt"):
+    WAITLIST_FILE = "waitlist.txt"
+
+SUBSCRIBERS_FILE = "subscribers.json" # Local backup on Mac (keep as is for local running)
 
 # Logging functionality
 logging.basicConfig(

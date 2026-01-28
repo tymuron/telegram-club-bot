@@ -15,7 +15,14 @@ from typing import Optional, Dict, List
 logger = logging.getLogger(__name__)
 
 # Configuration
-SUBSCRIBERS_FILE = "subscribers.json"
+# Configuration
+# Use persistent disk path on Render if available, else local file
+if os.path.exists("/var/data"):
+    DATA_DIR = "/var/data"
+else:
+    DATA_DIR = "."
+
+SUBSCRIBERS_FILE = os.path.join(DATA_DIR, "subscribers.json")
 REMINDER_DAY = 27  # Days after payment to send reminder
 EXPIRY_DAY = 30    # Days after payment when subscription expires
 GRACE_PERIOD = 3   # Extra days before kicking
