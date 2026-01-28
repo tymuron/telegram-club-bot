@@ -24,32 +24,63 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def load_subscriber_ids():
-    """Load subscriber IDs from Render API (with local fallback)."""
-    # Try fetching from Render API first
+    """
+    Load subscriber IDs with automatic sync:
+    1. Fetch from Render API
+    2. Merge with local file (in case Render redeployed)
+    3. Auto-save merged result back to local file
+    """
+    local_ids = set()
+    remote_ids = set()
+    
+    # Load local subscribers first
+    if os.path.exists(SUBSCRIBERS_FILE):
+        try:
+            with open(SUBSCRIBERS_FILE, "r") as f:
+                data = json.load(f)
+                local_ids = set(int(chat_id) for chat_id in data.keys())
+                logger.info(f"📂 Loaded {len(local_ids)} subscribers from local file")
+        except Exception as e:
+            logger.warning(f"Could not load local file: {e}")
+    
+    # Try fetching from Render API
     try:
         logger.info("📡 Fetching subscribers from Render API...")
         response = requests.get(RENDER_API_URL, timeout=10)
         if response.status_code == 200:
             data = response.json()
-            subscriber_ids = set(data.get('subscriber_ids', []))
-            logger.info(f"✅ Got {len(subscriber_ids)} subscribers from Render API")
-            return subscriber_ids
-        else:
-            logger.warning(f"Render API returned {response.status_code}")
+            remote_ids = set(data.get('subscriber_ids', []))
+            logger.info(f"✅ Got {len(remote_ids)} subscribers from Render API")
     except Exception as e:
         logger.warning(f"Could not fetch from Render API: {e}")
     
-    # Fallback to local file
-    logger.info("📂 Falling back to local subscribers.json...")
-    if not os.path.exists(SUBSCRIBERS_FILE):
-        return set()
-    try:
-        with open(SUBSCRIBERS_FILE, "r") as f:
-            data = json.load(f)
-            return set(int(chat_id) for chat_id in data.keys())
-    except Exception as e:
-        logger.error(f"Error loading local subscribers: {e}")
-        return set()
+    # Merge: take union of both (important if Render redeployed and lost some)
+    merged_ids = local_ids | remote_ids
+    
+    # Auto-save merged result back to local file (for backup)
+    if remote_ids and remote_ids != local_ids:
+        try:
+            # Load existing local data to preserve full records
+            existing_data = {}
+            if os.path.exists(SUBSCRIBERS_FILE):
+                with open(SUBSCRIBERS_FILE, "r") as f:
+                    existing_data = json.load(f)
+            
+            # Add any new subscriber IDs from remote
+            for sub_id in remote_ids:
+                if str(sub_id) not in existing_data:
+                    existing_data[str(sub_id)] = {"chat_id": sub_id, "status": "active"}
+            
+            with open(SUBSCRIBERS_FILE, "w") as f:
+                json.dump(existing_data, f, ensure_ascii=False, indent=2)
+            logger.info(f"💾 Auto-saved {len(existing_data)} subscribers to local backup")
+        except Exception as e:
+            logger.warning(f"Could not auto-save: {e}")
+    
+    if merged_ids:
+        logger.info(f"📊 Total unique subscribers (merged): {len(merged_ids)}")
+    
+    return merged_ids
 
 
 async def broadcast(message_text):
