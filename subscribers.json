@@ -1,35 +1,101 @@
 {
-    "828568605": {
-        "chat_id": 828568605,
-        "email": null,
-        "name": "Анна Paradigma (@anna_paradigma)",
-        "paid_at": "2026-01-28T12:00:00",
-        "expires_at": "2026-02-27T12:00:00",
-        "status": "active",
-        "reminder_sent": false,
-        "renewed_count": 1,
-        "notes": "Paid before webhook system was active"
-    },
-    "1069600264": {
-        "chat_id": 1069600264,
-        "email": null,
-        "name": "Natasha Tukmacheva (@natasha_tukmacheva)",
-        "paid_at": "2026-01-28T12:00:00",
-        "expires_at": "2026-02-27T12:00:00",
-        "status": "active",
-        "reminder_sent": false,
-        "renewed_count": 1,
-        "notes": "Paid before webhook system was active"
-    },
-    "259622921": {
-        "chat_id": 259622921,
-        "email": null,
-        "name": "Di💠 None (@Di_Ala)",
-        "paid_at": "2026-01-28T12:00:00",
-        "expires_at": "2026-02-27T12:00:00",
-        "status": "active",
-        "reminder_sent": false,
-        "renewed_count": 1,
-        "notes": "Paid before webhook system was active"
-    }
+  "828568605": {
+    "chat_id": 828568605,
+    "email": null,
+    "name": "Анна Paradigma (@anna_paradigma)",
+    "paid_at": "2026-01-28T12:00:00",
+    "expires_at": "2026-02-27T12:00:00",
+    "status": "active",
+    "reminder_sent": false,
+    "renewed_count": 1,
+    "notes": "Paid before webhook system was active"
+  },
+  "1069600264": {
+    "chat_id": 1069600264,
+    "email": null,
+    "name": "Natasha Tukmacheva (@natasha_tukmacheva)",
+    "paid_at": "2026-01-28T12:00:00",
+    "expires_at": "2026-02-27T12:00:00",
+    "status": "active",
+    "reminder_sent": false,
+    "renewed_count": 1,
+    "notes": "Paid before webhook system was active"
+  },
+  "259622921": {
+    "chat_id": 259622921,
+    "email": null,
+    "name": "Di💠 None (@Di_Ala)",
+    "paid_at": "2026-01-28T12:00:00",
+    "expires_at": "2026-02-27T12:00:00",
+    "status": "active",
+    "reminder_sent": false,
+    "renewed_count": 1,
+    "notes": "Paid before webhook system was active"
+  },
+  "978173316": {
+    "chat_id": 978173316,
+    "name": "Алина",
+    "status": "active",
+    "restored": true
+  },
+  "852199702": {
+    "chat_id": 852199702,
+    "name": "Елена",
+    "status": "active",
+    "restored": true
+  },
+  "999277747": {
+    "chat_id": 999277747,
+    "name": "Анастасия",
+    "status": "active",
+    "restored": true
+  },
+  "1167312034": {
+    "chat_id": 1167312034,
+    "name": "Оксана",
+    "status": "active",
+    "restored": true
+  },
+  "461918190": {
+    "chat_id": 461918190,
+    "name": "Наталья",
+    "status": "active",
+    "restored": true
+  },
+  "738779679": {
+    "chat_id": 738779679,
+    "name": "Малика",
+    "status": "active",
+    "restored": true
+  },
+  "47638674": {
+    "chat_id": 47638674,
+    "name": "Ксения",
+    "status": "active",
+    "restored": true
+  },
+  "1686161167": {
+    "chat_id": 1686161167,
+    "name": "Светлана",
+    "status": "active",
+    "restored": true
+  },
+  "907358063": {
+    "chat_id": 907358063,
+    "name": "Алена",
+    "status": "active",
+    "restored": true
+  },
+  "132705784": {
+    "chat_id": 132705784,
+    "name": "Евгения Белашова",
+    "status": "active",
+    "restored": true
+  },
+  "455128786": {
+    "chat_id": 455128786,
+    "name": "Кристина",
+    "status": "active",
+    "restored": true
+  }
 }
