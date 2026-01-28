@@ -571,10 +571,16 @@ def run():
 
         def run_flask():
             port = int(os.environ.get("PORT", 10000))
-            app.run(host="0.0.0.0", port=port)
+            logger.info(f"🚀 STARTING FLASK ON PORT: {port}")
+            try:
+                app.run(host="0.0.0.0", port=port)
+            except Exception as e:
+                logger.error(f"❌ FLASK FAILED TO START: {e}")
 
         # Run Flask in a separate thread
-        threading.Thread(target=run_flask, daemon=True).start()
+        t = threading.Thread(target=run_flask, daemon=True)
+        t.start()
+        logger.info(f"✅ Flask thread started: {t.is_alive()}")
 
     # Setup Scheduler for daily checks (using BackgroundScheduler)
     scheduler = BackgroundScheduler()
