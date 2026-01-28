@@ -598,9 +598,18 @@ def run():
         application.add_handler(CallbackQueryHandler(menu_callback))
         # ----------------
 
+        async def start_bot():
+            """Async function to properly start the bot without signal handlers."""
+            await application.initialize()
+            await application.start()
+            await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+            logger.info("✅ Bot polling started successfully!")
+            # Keep running forever
+            while True:
+                await asyncio.sleep(3600)  # Sleep 1 hour, repeat
+
         try:
-             # Note: run_polling is blocking, so we run it here in this thread
-             application.run_polling(allowed_updates=Update.ALL_TYPES, close_loop=False)
+            loop.run_until_complete(start_bot())
         except Exception as e:
             logger.error(f"❌ FATAL ERROR in Bot Polling: {e}", exc_info=True)
 
