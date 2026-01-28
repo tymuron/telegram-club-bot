@@ -1,4 +1,3 @@
-
 {
   "messages": [
     {
@@ -55,7 +54,9 @@
       "text_file": "messages/msg_07.txt",
       "audio_file": "media/voice_msg7.m4a",
       "send_time_utc": "2026-02-01T06:00:00",
-      "buttons": true
+      "buttons": true,
+      "button_text": "Вступить в Клуб",
+      "button_url": "https://annaromeoschool.getcourse.ru/club-pay"
     },
     {
       "id": 8,
