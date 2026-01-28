@@ -97,5 +97,17 @@
     "name": "Кристина",
     "status": "active",
     "restored": true
+  },
+  "1264015279": {
+    "chat_id": 1264015279,
+    "name": "Ирина",
+    "status": "active",
+    "manual_restore": true
+  },
+  "452932409": {
+    "chat_id": 452932409,
+    "name": "Екатерина",
+    "status": "active",
+    "manual_restore": true
   }
 }
