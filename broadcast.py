@@ -1,8 +1,10 @@
 import os
 import asyncio
 import re
+import json
 import logging
 import sys
+import requests
 from dotenv import load_dotenv
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import Forbidden, BadRequest
@@ -11,13 +13,44 @@ from telegram.error import Forbidden, BadRequest
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PAYMENT_LINK = os.getenv("PAYMENT_LINK")
+RENDER_API_URL = "https://telegram-club-bot-z7xk.onrender.com/api/subscribers"
 WAITLIST_FILE = "waitlist.txt"
+SUBSCRIBERS_FILE = "subscribers.json"
 
 # Logging functionality
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+def load_subscriber_ids():
+    """Load subscriber IDs from Render API (with local fallback)."""
+    # Try fetching from Render API first
+    try:
+        logger.info("📡 Fetching subscribers from Render API...")
+        response = requests.get(RENDER_API_URL, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            subscriber_ids = set(data.get('subscriber_ids', []))
+            logger.info(f"✅ Got {len(subscriber_ids)} subscribers from Render API")
+            return subscriber_ids
+        else:
+            logger.warning(f"Render API returned {response.status_code}")
+    except Exception as e:
+        logger.warning(f"Could not fetch from Render API: {e}")
+    
+    # Fallback to local file
+    logger.info("📂 Falling back to local subscribers.json...")
+    if not os.path.exists(SUBSCRIBERS_FILE):
+        return set()
+    try:
+        with open(SUBSCRIBERS_FILE, "r") as f:
+            data = json.load(f)
+            return set(int(chat_id) for chat_id in data.keys())
+    except Exception as e:
+        logger.error(f"Error loading local subscribers: {e}")
+        return set()
+
 
 async def broadcast(message_text):
     if not BOT_TOKEN:
@@ -30,7 +63,12 @@ async def broadcast(message_text):
 
     bot = Bot(token=BOT_TOKEN)
     
-    # 1. Parse User IDs
+    # 1. Load subscriber IDs to exclude
+    subscriber_ids = load_subscriber_ids()
+    if subscriber_ids:
+        logger.info(f"📋 Found {len(subscriber_ids)} paying subscribers - they will be SKIPPED")
+    
+    # 2. Parse User IDs from waitlist
     user_ids = set()
     try:
         with open(WAITLIST_FILE, "r", encoding="utf-8") as f:
@@ -46,15 +84,22 @@ async def broadcast(message_text):
     if not user_ids:
         logger.warning("No User IDs found in waitlist.txt.")
         return
+    
+    # 3. Exclude subscribers from broadcast
+    non_subscribers = user_ids - subscriber_ids
+    skipped_count = len(user_ids) - len(non_subscribers)
+    
+    if skipped_count > 0:
+        logger.info(f"⏭️ Skipping {skipped_count} users who already paid")
 
-    logger.info(f"📢 Starting broadcast to {len(user_ids)} users...")
+    logger.info(f"📢 Starting broadcast to {len(non_subscribers)} non-paying users...")
     logger.info(f"✉️ Message: {message_text[:50]}...")
 
-    # 2. Send Messages
+    # 4. Send Messages
     success_count = 0
     fail_count = 0
 
-    for user_id in user_ids:
+    for user_id in non_subscribers:
         try:
             # Create Keyboard with Payment Link (includes user ID for tracking)
             reply_markup = None

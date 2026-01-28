@@ -453,6 +453,21 @@ def main() -> None:
     def health_check():
         return "Bot is alive!", 200
 
+    @app.route('/api/subscribers', methods=['GET'])
+    def get_subscribers_api():
+        """Return list of subscriber IDs for broadcast filtering."""
+        try:
+            subscribers = sm.get_all_subscribers()
+            subscriber_ids = [int(chat_id) for chat_id in subscribers.keys()]
+            return jsonify({
+                "status": "ok",
+                "count": len(subscriber_ids),
+                "subscriber_ids": subscriber_ids
+            }), 200
+        except Exception as e:
+            logger.error(f"Error getting subscribers: {e}")
+            return jsonify({"status": "error", "message": str(e)}), 500
+
     @app.route('/webhook/payment', methods=['POST'])
     def payment_webhook():
         """Receive payment notifications from GetCourse."""
