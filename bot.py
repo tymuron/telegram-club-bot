@@ -172,8 +172,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             logger.error(f"Failed to notify admin: {e}")
 
     await update.message.reply_html(
-        TEXT_WELCOME.format(name=user.first_name)
-        # No menu, just text as requested
+        TEXT_WELCOME.format(name=user.first_name),
+        reply_markup=get_main_menu()
     )
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
