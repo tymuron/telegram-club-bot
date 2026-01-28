@@ -476,14 +476,42 @@ def main() -> None:
                 )
                 logger.info(f"✅ Payment recorded for {parsed['chat_id']}")
                 
+                # Send invite link to user
+                if CHANNEL_ID and bot_application:
+                    async def send_invite():
+                        try:
+                            # Create invite link
+                            invite = await bot_application.bot.create_chat_invite_link(
+                                chat_id=CHANNEL_ID,
+                                member_limit=1,
+                                name=f"User {parsed['chat_id']}"
+                            )
+                            # Send success message with invite link
+                            keyboard = [[InlineKeyboardButton("🚪 Войти в Клуб", url=invite.invite_link)]]
+                            await bot_application.bot.send_message(
+                                chat_id=parsed['chat_id'],
+                                text=TEXT_SUCCESS,
+                                parse_mode="HTML",
+                                reply_markup=InlineKeyboardMarkup(keyboard)
+                            )
+                            logger.info(f"✅ Invite link sent to {parsed['chat_id']}")
+                        except Exception as e:
+                            logger.error(f"Failed to send invite: {e}")
+                    
+                    asyncio.run_coroutine_threadsafe(send_invite(), asyncio.get_event_loop())
+                
                 # Notify admin
                 if ADMIN_ID and bot_application:
-                    asyncio.create_task(
-                        bot_application.bot.send_message(
-                            chat_id=ADMIN_ID,
-                            text=f"💰 Новая оплата!\n{parsed.get('name') or parsed.get('email') or parsed['chat_id']}"
-                        )
-                    )
+                    async def notify_admin():
+                        try:
+                            await bot_application.bot.send_message(
+                                chat_id=ADMIN_ID,
+                                text=f"💰 Новая оплата!\n{parsed.get('name') or parsed.get('email') or parsed['chat_id']}"
+                            )
+                        except Exception as e:
+                            logger.error(f"Failed to notify admin: {e}")
+                    
+                    asyncio.run_coroutine_threadsafe(notify_admin(), asyncio.get_event_loop())
             
             return jsonify({"status": "ok"}), 200
             
