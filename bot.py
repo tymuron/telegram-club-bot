@@ -550,8 +550,31 @@ def main() -> None:
         port = int(os.environ.get("PORT", 10000))
         app.run(host="0.0.0.0", port=port)
 
-    # Run Flask in a separate thread
-    threading.Thread(target=run_flask, daemon=True).start()
+from broadcast import check_campaign_job
+
+# ... (Logging config usually here, but keeping file structure)
+
+# --- WEBHOOK SERVER (Remote) ---
+# ... (Existing code)
+
+def run():
+    """Runs the bot."""
+    # Start Webhook Server (Render requires a bound port)
+    if not os.environ.get("PORT"):
+        logger.warning("No PORT in env, assuming local run w/o webhook server or manual start")
+    else:
+        app = Flask(__name__)
+        @app.route(WEBHOOK_PATH, methods=['POST'])
+        def webhook():
+             # ... (existing webhook logic) ...
+             return jsonify({"status": "ok"}), 200
+
+        def run_flask():
+            port = int(os.environ.get("PORT", 10000))
+            app.run(host="0.0.0.0", port=port)
+
+        # Run Flask in a separate thread
+        threading.Thread(target=run_flask, daemon=True).start()
 
     # Setup Scheduler for daily checks (using BackgroundScheduler)
     scheduler = BackgroundScheduler()
@@ -564,8 +587,13 @@ def main() -> None:
     
     scheduler.add_job(run_async_job(check_reminders_job), 'cron', hour=10, minute=0)  # 10:00 AM daily
     scheduler.add_job(run_async_job(check_expiries_job), 'cron', hour=10, minute=30)  # 10:30 AM daily
+    
+    # --- CAMPAIGN AUTOPILOT ---
+    # Check for scheduled broadcast messages every minute
+    scheduler.add_job(run_async_job(check_campaign_job), 'interval', minutes=1)
+    
     scheduler.start()
-    logger.info("📅 Scheduler started (reminders at 10:00, expiries at 10:30)")
+    logger.info("📅 Scheduler started (Reminders 10:00, Expiries 10:30, Campaign every 1min)")
 
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 

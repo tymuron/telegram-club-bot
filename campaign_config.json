@@ -1,0 +1,101 @@
+
+{
+  "messages": [
+    {
+      "id": 1,
+      "text_file": "messages/msg_01.txt",
+      "send_time_utc": "2026-01-29T06:00:00",
+      "buttons": true,
+      "button_text": "Вступить в Клуб",
+      "button_url": "https://annaromeoschool.getcourse.ru/club-pay"
+    },
+    {
+      "id": 2,
+      "text_file": "messages/msg_02.txt",
+      "send_time_utc": "2026-01-29T16:00:00",
+      "buttons": true,
+      "button_text": "ПРИСОЕДИНИТЬСЯ",
+      "button_url": "https://annaromeoschool.getcourse.ru/club-pay"
+    },
+    {
+      "id": 3,
+      "text_file": "messages/msg_03.txt",
+      "video_file": "media/video_msg3.mp4",
+      "send_time_utc": "2026-01-30T06:00:00",
+      "buttons": true,
+      "button_text": "Вступить в Клуб",
+      "button_url": "https://annaromeoschool.getcourse.ru/club-pay"
+    },
+    {
+      "id": 4,
+      "text_file": "messages/msg_04.txt",
+      "send_time_utc": "2026-01-30T16:00:00",
+      "buttons": true,
+      "button_text": "Оплатить 1 490 ₽",
+      "button_url": "https://annaromeoschool.getcourse.ru/club-pay"
+    },
+    {
+      "id": 5,
+      "text_file": "messages/msg_05.txt",
+      "send_time_utc": "2026-01-31T06:00:00",
+      "buttons": true,
+      "button_text": "Оплатить 1 490 ₽",
+      "button_url": "https://annaromeoschool.getcourse.ru/club-pay"
+    },
+    {
+      "id": 6,
+      "text_file": "messages/msg_06.txt",
+      "send_time_utc": "2026-01-31T16:00:00",
+      "buttons": true,
+      "button_text": "Оплатить 1 490 ₽",
+      "button_url": "https://annaromeoschool.getcourse.ru/club-pay"
+    },
+    {
+      "id": 7,
+      "text_file": "messages/msg_07.txt",
+      "audio_file": "media/voice_msg7.m4a",
+      "send_time_utc": "2026-02-01T06:00:00",
+      "buttons": true
+    },
+    {
+      "id": 8,
+      "text_file": "messages/msg_08.txt",
+      "send_time_utc": "2026-02-03T06:00:00",
+      "buttons": true,
+      "button_text": "Вступить — 1 490 ₽",
+      "button_url": "https://annaromeoschool.getcourse.ru/club-pay"
+    },
+    {
+      "id": 9,
+      "text_file": "messages/msg_09.txt",
+      "send_time_utc": "2026-02-04T06:00:00",
+      "buttons": true,
+      "button_text": "Вступить — 1 490 ₽",
+      "button_url": "https://annaromeoschool.getcourse.ru/club-pay"
+    },
+    {
+      "id": 10,
+      "text_file": "messages/msg_10.txt",
+      "send_time_utc": "2026-02-05T06:00:00",
+      "buttons": true,
+      "button_text": "Вступить — 1 490 ₽",
+      "button_url": "https://annaromeoschool.getcourse.ru/club-pay"
+    },
+    {
+      "id": 11,
+      "text_file": "messages/msg_11.txt",
+      "send_time_utc": "2026-02-06T06:00:00",
+      "buttons": true,
+      "button_text": "Вступить — 1 490 ₽",
+      "button_url": "https://annaromeoschool.getcourse.ru/club-pay"
+    },
+    {
+      "id": 12,
+      "text_file": "messages/msg_12.txt",
+      "send_time_utc": "2026-02-07T06:00:00",
+      "buttons": true,
+      "button_text": "Вступить — 1 490 ₽",
+      "button_url": "https://annaromeoschool.getcourse.ru/club-pay"
+    }
+  ]
+}
