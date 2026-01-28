@@ -707,6 +707,21 @@ def run():
         def health_check():
             return "Bot is running", 200
 
+        # API: Get subscriber IDs for broadcast filtering
+        @app.route('/api/subscribers', methods=['GET'])
+        def get_subscribers_api():
+            """Return list of subscriber IDs for broadcast filtering."""
+            try:
+                subs = sm.get_all_subscribers()
+                subscriber_ids = [int(k) for k in subs.keys()]
+                return jsonify({
+                    "count": len(subscriber_ids),
+                    "subscriber_ids": subscriber_ids
+                }), 200
+            except Exception as e:
+                logger.error(f"API error: {e}")
+                return jsonify({"error": str(e)}), 500
+
         # Run Flask (Blocks forever)
         app.run(host="0.0.0.0", port=int(port), debug=False, use_reloader=False)
     else:
