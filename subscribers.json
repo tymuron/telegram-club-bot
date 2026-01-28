@@ -187,5 +187,25 @@
     "reminder_sent": false,
     "renewed_count": 1,
     "notes": "Added from GetCourse Jan 28 evening"
+  },
+  "835542919": {
+    "chat_id": 835542919,
+    "name": "Юлия Тихомирова",
+    "paid_at": "2026-01-28T22:23:38.626621",
+    "expires_at": "2026-02-27T22:23:38.626621",
+    "status": "active",
+    "reminder_sent": false,
+    "renewed_count": 1,
+    "notes": "Added manually Jan 28"
+  },
+  "500942259": {
+    "chat_id": 500942259,
+    "name": "Лара / Лариса Егорова (@larisa_v_egorova)",
+    "paid_at": "2026-01-28T22:23:38.626621",
+    "expires_at": "2026-02-27T22:23:38.626621",
+    "status": "active",
+    "reminder_sent": false,
+    "renewed_count": 1,
+    "notes": "Added manually Jan 28"
   }
 }
