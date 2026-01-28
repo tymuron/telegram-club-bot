@@ -115,5 +115,17 @@
     "name": "Ксения (kseniya_oprio)",
     "status": "active",
     "manual_restore": true
+  },
+  "438917783": {
+    "chat_id": 438917783,
+    "name": "Elena (E_ilkaeva)",
+    "status": "active",
+    "manual_restore": true
+  },
+  "346912809": {
+    "chat_id": 346912809,
+    "name": "Елена Ло (@len_lo)",
+    "status": "active",
+    "manual_restore": true
   }
 }
