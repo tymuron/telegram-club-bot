@@ -127,5 +127,65 @@
     "name": "Елена Ло (@len_lo)",
     "status": "active",
     "manual_restore": true
+  },
+  "1069040845": {
+    "chat_id": 1069040845,
+    "name": "Lucy Rosenthal (@lu_rosen)",
+    "paid_at": "2026-01-28T22:03:22.673626",
+    "expires_at": "2026-02-27T22:03:22.673626",
+    "status": "active",
+    "reminder_sent": false,
+    "renewed_count": 1,
+    "notes": "Added from GetCourse Jan 28 evening"
+  },
+  "258167458": {
+    "chat_id": 258167458,
+    "name": "Гузель (@guzelCreat)",
+    "paid_at": "2026-01-28T22:03:22.673626",
+    "expires_at": "2026-02-27T22:03:22.673626",
+    "status": "active",
+    "reminder_sent": false,
+    "renewed_count": 1,
+    "notes": "Added from GetCourse Jan 28 evening"
+  },
+  "957755530": {
+    "chat_id": 957755530,
+    "name": "Daria (@daria_nekrasovas)",
+    "paid_at": "2026-01-28T22:03:22.673626",
+    "expires_at": "2026-02-27T22:03:22.673626",
+    "status": "active",
+    "reminder_sent": false,
+    "renewed_count": 1,
+    "notes": "Added from GetCourse Jan 28 evening"
+  },
+  "1391226702": {
+    "chat_id": 1391226702,
+    "name": "Татьяна",
+    "paid_at": "2026-01-28T22:03:22.673626",
+    "expires_at": "2026-02-27T22:03:22.673626",
+    "status": "active",
+    "reminder_sent": false,
+    "renewed_count": 1,
+    "notes": "Added from GetCourse Jan 28 evening"
+  },
+  "1321564173": {
+    "chat_id": 1321564173,
+    "name": "Татьяна (@tatiana_astroved)",
+    "paid_at": "2026-01-28T22:03:22.673626",
+    "expires_at": "2026-02-27T22:03:22.673626",
+    "status": "active",
+    "reminder_sent": false,
+    "renewed_count": 1,
+    "notes": "Added from GetCourse Jan 28 evening"
+  },
+  "961505234": {
+    "chat_id": 961505234,
+    "name": "Julia Mironova",
+    "paid_at": "2026-01-28T22:03:22.673626",
+    "expires_at": "2026-02-27T22:03:22.673626",
+    "status": "active",
+    "reminder_sent": false,
+    "renewed_count": 1,
+    "notes": "Added from GetCourse Jan 28 evening"
   }
 }
