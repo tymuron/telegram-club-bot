@@ -476,42 +476,50 @@ def main() -> None:
                 )
                 logger.info(f"✅ Payment recorded for {parsed['chat_id']}")
                 
-                # Send invite link to user
-                if CHANNEL_ID and bot_application:
-                    async def send_invite():
-                        try:
-                            # Create invite link
-                            invite = await bot_application.bot.create_chat_invite_link(
-                                chat_id=CHANNEL_ID,
-                                member_limit=1,
-                                name=f"User {parsed['chat_id']}"
-                            )
-                            # Send success message with invite link
-                            keyboard = [[InlineKeyboardButton("🚪 Войти в Клуб", url=invite.invite_link)]]
-                            await bot_application.bot.send_message(
-                                chat_id=parsed['chat_id'],
-                                text=TEXT_SUCCESS,
-                                parse_mode="HTML",
-                                reply_markup=InlineKeyboardMarkup(keyboard)
-                            )
-                            logger.info(f"✅ Invite link sent to {parsed['chat_id']}")
-                        except Exception as e:
-                            logger.error(f"Failed to send invite: {e}")
-                    
-                    asyncio.run_coroutine_threadsafe(send_invite(), asyncio.get_event_loop())
+                # Schedule async tasks to run on the main event loop
+                chat_id = parsed['chat_id']
+                user_name = parsed.get('name') or parsed.get('email') or str(chat_id)
                 
-                # Notify admin
-                if ADMIN_ID and bot_application:
-                    async def notify_admin():
+                # We'll use a simple approach: store tasks to run later
+                # For now, log and return - the user will get access via the channel
+                logger.info(f"🎫 User {chat_id} should receive invite link")
+                
+                # Try to send messages using threading
+                import threading
+                def send_messages():
+                    import asyncio
+                    async def do_send():
                         try:
-                            await bot_application.bot.send_message(
-                                chat_id=ADMIN_ID,
-                                text=f"💰 Новая оплата!\n{parsed.get('name') or parsed.get('email') or parsed['chat_id']}"
-                            )
+                            if CHANNEL_ID and bot_application:
+                                # Create invite link
+                                invite = await bot_application.bot.create_chat_invite_link(
+                                    chat_id=CHANNEL_ID,
+                                    member_limit=1,
+                                    name=f"User {chat_id}"
+                                )
+                                # Send success message with invite link
+                                keyboard = [[InlineKeyboardButton("🚪 Войти в Клуб", url=invite.invite_link)]]
+                                await bot_application.bot.send_message(
+                                    chat_id=chat_id,
+                                    text=TEXT_SUCCESS,
+                                    parse_mode="HTML",
+                                    reply_markup=InlineKeyboardMarkup(keyboard)
+                                )
+                                logger.info(f"✅ Invite link sent to {chat_id}")
+                            
+                            if ADMIN_ID and bot_application:
+                                await bot_application.bot.send_message(
+                                    chat_id=ADMIN_ID,
+                                    text=f"💰 Новая оплата!\n{user_name}"
+                                )
+                                logger.info(f"✅ Admin notified about {chat_id}")
                         except Exception as e:
-                            logger.error(f"Failed to notify admin: {e}")
+                            logger.error(f"Failed to send messages: {e}")
                     
-                    asyncio.run_coroutine_threadsafe(notify_admin(), asyncio.get_event_loop())
+                    asyncio.run(do_send())
+                
+                thread = threading.Thread(target=send_messages)
+                thread.start()
             
             return jsonify({"status": "ok"}), 200
             
