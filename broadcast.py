@@ -171,33 +171,43 @@ async def broadcast_message(message_config):
 
 async def check_campaign_job():
     """Scheduled job to check if any messages need sending."""
-    if not os.path.exists(CAMPAIGN_CONFIG_FILE):
-        return
-
     try:
-        with open(CAMPAIGN_CONFIG_FILE, "r") as f:
-            config = json.load(f)
-    except Exception as e:
-        logger.error(f"Error loading config: {e}")
-        return
+        if not os.path.exists(CAMPAIGN_CONFIG_FILE):
+            return
 
-    state = load_campaign_state()
-    sent_ids = set(state.get("sent_messages", []))
-    
-    now_utc = datetime.now(timezone.utc)
-    
-    for msg in config["messages"]:
-        msg_id = msg["id"]
-        # Parse sending time
-        send_time = datetime.fromisoformat(msg["send_time_utc"]).replace(tzinfo=timezone.utc)
+        try:
+            with open(CAMPAIGN_CONFIG_FILE, "r") as f:
+                config = json.load(f)
+        except Exception as e:
+            logger.error(f"Error loading config: {e}")
+            return
+
+        state = load_campaign_state()
+        sent_ids = set(state.get("sent_messages", []))
         
-        if msg_id not in sent_ids and now_utc >= send_time:
-            logger.info(f"⏰ Time to send Msg #{msg_id}!")
-            await broadcast_message(msg)
+        now_utc = datetime.now(timezone.utc)
+        
+        for msg in config["messages"]:
+            msg_id = msg["id"]
+            # Parse sending time
+            try:
+                send_time = datetime.fromisoformat(msg["send_time_utc"]).replace(tzinfo=timezone.utc)
+            except Exception as e:
+                logger.error(f"Invalid date format for msg {msg_id}: {e}")
+                continue
             
-            # Mark as sent
-            state["sent_messages"].append(msg_id)
-            save_campaign_state(state)
+            if msg_id not in sent_ids and now_utc >= send_time:
+                logger.info(f"⏰ Time to send Msg #{msg_id}!")
+                try:
+                    await broadcast_message(msg)
+                    # Mark as sent only if broadcast didn't crash
+                    state["sent_messages"].append(msg_id)
+                    save_campaign_state(state)
+                except Exception as e:
+                    logger.error(f"💥 Crashed sending Msg #{msg_id}: {e}", exc_info=True)
+
+    except Exception as e:
+        logger.error(f"💥 CRITICAL ERROR in check_campaign_job: {e}", exc_info=True)
 
 if __name__ == "__main__":
     # Test run
