@@ -573,7 +573,8 @@ def run():
             port = int(os.environ.get("PORT", 10000))
             logger.info(f"🚀 STARTING FLASK ON PORT: {port}")
             try:
-                app.run(host="0.0.0.0", port=port)
+                # IMPORTANT: use_reloader=False is required when running in a thread!
+                app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
             except Exception as e:
                 logger.error(f"❌ FLASK FAILED TO START: {e}")
 
