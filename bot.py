@@ -630,24 +630,44 @@ def run():
         def webhook():
              """Handle incoming GetCourse payments."""
              try:
-                # We need to manually parse the form-data from GetCourse
-                # GetCourse sends: ID, status, uid, phone, email, name, etc.
-                # We expect custom field 'tg_id' passed in link
+                # Log everything for debugging
+                logger.info(f"📥 Webhook received: Headers={dict(request.headers)}")
+                logger.info(f"📥 Webhook form: {dict(request.form)}")
+                logger.info(f"📥 Webhook args: {dict(request.args)}")
                 
-                # Check query params for tg_id (we add it to payment link)
+                # GetCourse may send data in different places - check ALL
+                # 1. Query params
                 chat_id = request.args.get('tg_id')
                 
-                # Fallback: check body
-                if not chat_id and request.form.get('tg_id'):
+                # 2. Form data (x-www-form-urlencoded)
+                if not chat_id:
                     chat_id = request.form.get('tg_id')
+                
+                # 3. Headers (where you configured it in GetCourse!)
+                if not chat_id:
+                    chat_id = request.headers.get('tg_id') or request.headers.get('Tg-Id') or request.headers.get('TG_ID')
+                
+                # 4. JSON body
+                if not chat_id and request.is_json:
+                    data = request.get_json()
+                    chat_id = data.get('tg_id')
+                
+                # Get other fields from all sources
+                def get_field(name):
+                    return (request.form.get(name) or 
+                            request.headers.get(name) or 
+                            request.args.get(name) or
+                            (request.get_json() or {}).get(name) if request.is_json else None)
+                
+                status = (get_field('status') or '').lower()
+                email = get_field('email')
+                name = get_field('name')
+                
+                logger.info(f"💰 Parsed: tg_id={chat_id}, status={status}, email={email}, name={name}")
                 
                 if not chat_id:
                      # Just return OK for general status updates that don't concern us
                      return jsonify({"status": "ignored", "reason": "no tg_id"}), 200
-
-                # Data from GetCourse
-                status = request.form.get('status', '').lower() # paid, completed
-                email = request.form.get('email')
                 name = request.form.get('name')
                 
                 logger.info(f"💰 Payment Webhook: ID={chat_id} Status={status} Email={email}")
