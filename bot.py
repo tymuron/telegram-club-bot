@@ -1,3 +1,4 @@
+
 import os
 import logging
 import threading
@@ -122,9 +123,13 @@ def get_join_menu(user_id: int = None):
     keyboard = []
     
     if PAYMENT_LINK:
-        # Append user's Telegram ID to URL for webhook matching
+        # Generate unique token for this user's payment
+        import payment_tokens as pt
+        token = pt.generate_token(user_id) if user_id else None
+        
+        # Add token to URL (GetCourse will return this literal value, not a template)
         separator = "&" if "?" in PAYMENT_LINK else "?"
-        tracked_url = f"{PAYMENT_LINK}{separator}tg_id={user_id}" if user_id else PAYMENT_LINK
+        tracked_url = f"{PAYMENT_LINK}{separator}token={token}" if token else PAYMENT_LINK
         keyboard.append([InlineKeyboardButton("💳 Оплатить и вступить", url=tracked_url)])
     else:
         keyboard.append([InlineKeyboardButton("🙋‍♀️ Хочу в клуб! (Лист ожидания)", callback_data="join_waitlist")])
@@ -635,40 +640,37 @@ def run():
                 logger.info(f"📥 Webhook form: {dict(request.form)}")
                 logger.info(f"📥 Webhook args: {dict(request.args)}")
                 
-                # GetCourse may send data in different places - check ALL
-                # 1. Query params
-                chat_id = request.args.get('tg_id')
-                
-                # 2. Form data (x-www-form-urlencoded)
-                if not chat_id:
-                    chat_id = request.form.get('tg_id')
-                
-                # 3. Headers (where you configured it in GetCourse!)
-                if not chat_id:
-                    chat_id = request.headers.get('tg_id') or request.headers.get('Tg-Id') or request.headers.get('TG_ID')
-                
-                # 4. JSON body
-                if not chat_id and request.is_json:
-                    data = request.get_json()
-                    chat_id = data.get('tg_id')
-                
-                # Get other fields from all sources
+                # Get field from all possible sources
                 def get_field(name):
                     return (request.form.get(name) or 
                             request.headers.get(name) or 
                             request.args.get(name) or
-                            (request.get_json() or {}).get(name) if request.is_json else None)
+                            ((request.get_json() or {}).get(name) if request.is_json else None))
                 
+                # METHOD 1: Token-based lookup (preferred - works with GetCourse)
+                token = get_field('token')
+                chat_id = None
+                
+                if token and token.startswith('tok_'):
+                    import payment_tokens as pt
+                    chat_id = pt.lookup_token(token)
+                    if chat_id:
+                        logger.info(f"🎫 Token {token} resolved to user {chat_id}")
+                
+                # METHOD 2: Direct tg_id (fallback)
+                if not chat_id:
+                    chat_id = get_field('tg_id')
+                
+                # Get other fields
                 status = (get_field('status') or '').lower()
                 email = get_field('email')
                 name = get_field('name')
                 
-                logger.info(f"💰 Parsed: tg_id={chat_id}, status={status}, email={email}, name={name}")
+                logger.info(f"💰 Parsed: token={token}, tg_id={chat_id}, status={status}, email={email}")
                 
                 if not chat_id:
                      # Just return OK for general status updates that don't concern us
-                     return jsonify({"status": "ignored", "reason": "no tg_id"}), 200
-                name = request.form.get('name')
+                     return jsonify({"status": "ignored", "reason": "no token or tg_id"}), 200
                 
                 logger.info(f"💰 Payment Webhook: ID={chat_id} Status={status} Email={email}")
                 
