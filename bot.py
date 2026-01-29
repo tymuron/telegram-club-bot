@@ -123,13 +123,9 @@ def get_join_menu(user_id: int = None):
     keyboard = []
     
     if PAYMENT_LINK:
-        # Generate unique token for this user's payment
-        import payment_tokens as pt
-        token = pt.generate_token(user_id) if user_id else None
-        
-        # Add token to URL (GetCourse will return this literal value, not a template)
+        # Append user's Telegram ID to URL for webhook matching
         separator = "&" if "?" in PAYMENT_LINK else "?"
-        tracked_url = f"{PAYMENT_LINK}{separator}token={token}" if token else PAYMENT_LINK
+        tracked_url = f"{PAYMENT_LINK}{separator}tg_id={user_id}" if user_id else PAYMENT_LINK
         keyboard.append([InlineKeyboardButton("💳 Оплатить и вступить", url=tracked_url)])
     else:
         keyboard.append([InlineKeyboardButton("🙋‍♀️ Хочу в клуб! (Лист ожидания)", callback_data="join_waitlist")])
