@@ -631,7 +631,7 @@ def run():
         
         app = Flask(__name__)
         
-        @app.route(WEBHOOK_PATH, methods=['POST'])
+        @app.route(WEBHOOK_PATH, methods=['GET', 'POST'])
         def webhook():
              """Handle incoming GetCourse payments."""
              try:
