@@ -64,10 +64,27 @@ def load_subscriber_ids():
     return local_ids | remote_ids
 
 def load_target_users():
-    """Load verify users from waitlist who have NOT paid."""
+    """Load users from users.json (active funnel) who have NOT paid."""
     subscriber_ids = load_subscriber_ids()
     target_users = set()
     
+    # 1. Try loading from users.json (The Database)
+    users_file = os.path.join(DATA_DIR, "users.json")
+    if os.path.exists(users_file):
+        try:
+            with open(users_file, "r", encoding="utf-8") as f:
+                users_db = json.load(f)
+                for uid, user_data in users_db.items():
+                    user_id = int(uid)
+                    # Filter out those who paid or are blocked
+                    if user_id not in subscriber_ids and user_data.get("status") != "blocked":
+                        target_users.add(user_id)
+            logger.info(f"Loaded {len(target_users)} active users from DB.")
+            return target_users
+        except Exception as e:
+            logger.error(f"Error reading users.json: {e}")
+
+    # 2. Fallback to waitlist.txt (Legacy)
     if not os.path.exists(WAITLIST_FILE):
         return set()
 
