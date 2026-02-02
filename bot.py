@@ -7,7 +7,7 @@ from datetime import datetime
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 from telegram import Update, LabeledPrice, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes, PreCheckoutQueryHandler, MessageHandler, filters, CallbackQueryHandler, ApplicationBuilder
+from telegram.ext import Application, CommandHandler, ContextTypes, PreCheckoutQueryHandler, MessageHandler, filters, CallbackQueryHandler, ApplicationBuilder, ChatJoinRequestHandler
 from apscheduler.schedulers.background import BackgroundScheduler
 
 # Import our subscription manager
@@ -592,11 +592,40 @@ def run():
         global application
         application = ApplicationBuilder().token(BOT_TOKEN).build()
 
+        async def approve_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            """Auto-approves join requests for paid subscribers."""
+            chat_join_request = update.chat_join_request
+            user_id = chat_join_request.from_user.id
+            chat_id = chat_join_request.chat.id
+            
+            logger.info(f"🔔 Received join request from {user_id} for chat {chat_id}")
+            
+            # Check if user is in our subscribers database
+            # We need to reload subscribers to be sure
+            subs = sm.load_subscribers()
+            
+            is_valid = False
+            if str(user_id) in subs:
+                user_data = subs[str(user_id)]
+                if user_data.get("status") == "active":
+                    is_valid = True
+                    logger.info(f"✅ Auto-approving {user_id} (Found in DB)")
+            
+            if is_valid:
+                try:
+                    await context.bot.approve_chat_join_request(chat_id=chat_id, user_id=user_id)
+                    await context.bot.send_message(chat_id=user_id, text="✅ Ваша заявка одобрена! Добро пожаловать в клуб.")
+                except Exception as e:
+                    logger.error(f"Failed to approve request for {user_id}: {e}")
+            else:
+                logger.info(f"⏳ User {user_id} not found/active in DB. Ignoring request.")
+
         # --- HANDLERS ---
         application.add_handler(CommandHandler("start", start))
         application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
         application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
         application.add_handler(CallbackQueryHandler(menu_callback))
+        application.add_handler(ChatJoinRequestHandler(approve_join_request))
         # ----------------
 
         async def start_bot():
