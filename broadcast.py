@@ -80,25 +80,22 @@ def load_target_users():
                     if user_id not in subscriber_ids and user_data.get("status") != "blocked":
                         target_users.add(user_id)
             logger.info(f"Loaded {len(target_users)} active users from DB.")
-            return target_users
         except Exception as e:
             logger.error(f"Error reading users.json: {e}")
 
-    # 2. Fallback to waitlist.txt (Legacy)
-    if not os.path.exists(WAITLIST_FILE):
-        return set()
-
-    try:
-        with open(WAITLIST_FILE, "r", encoding="utf-8") as f:
-            for line in f:
-                # Expecting line format: "Name (@user) - ID: 12345"
-                match = re.search(r"ID:\s*(\d+)", line)
-                if match:
-                    user_id = int(match.group(1))
-                    if user_id not in subscriber_ids:
-                        target_users.add(user_id)
-    except Exception as e:
-        logger.error(f"Error reading waitlist: {e}")
+    # 2. Merge with waitlist.txt (Legacy/New Leads)
+    if os.path.exists(WAITLIST_FILE):
+        try:
+            with open(WAITLIST_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    # Expecting line format: "Name (@user) - ID: 12345"
+                    match = re.search(r"ID:\s*(\d+)", line)
+                    if match:
+                        user_id = int(match.group(1))
+                        if user_id not in subscriber_ids:
+                            target_users.add(user_id)
+        except Exception as e:
+            logger.error(f"Error reading waitlist: {e}")
         
     return target_users
 
