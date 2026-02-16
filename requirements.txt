@@ -3,3 +3,4 @@ python-dotenv
 flask
 apscheduler
 requests
+supabase

@@ -11,8 +11,8 @@ from telegram import Update, LabeledPrice, InlineKeyboardButton, InlineKeyboardM
 from telegram.ext import Application, CommandHandler, ContextTypes, PreCheckoutQueryHandler, MessageHandler, filters, CallbackQueryHandler, ApplicationBuilder, ChatJoinRequestHandler
 from apscheduler.schedulers.background import BackgroundScheduler
 
-# Import our subscription manager
-import subscription_manager as sm
+# Import our database layer (Supabase)
+import db
 
 # Load environment variables
 load_dotenv()
@@ -146,47 +146,6 @@ def get_back_menu():
     return InlineKeyboardMarkup(keyboard)
 
 
-# --- USERS.JSON MANAGEMENT ---
-# Persistent disk on Render, local otherwise
-if os.path.exists("/var/data"):
-    _DATA_DIR = "/var/data"
-else:
-    _DATA_DIR = "."
-
-_USERS_FILE = os.path.join(_DATA_DIR, "users.json")
-
-
-def load_users():
-    """Load users database."""
-    if not os.path.exists(_USERS_FILE):
-        return {}
-    try:
-        with open(_USERS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"Error loading users.json: {e}")
-        return {}
-
-
-def save_users(data):
-    """Save users database."""
-    try:
-        with open(_USERS_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2, default=str)
-    except Exception as e:
-        logger.error(f"Error saving users.json: {e}")
-
-
-def save_user(user_id, data_update):
-    """Update a single user record in users.json."""
-    users = load_users()
-    uid = str(user_id)
-    if uid not in users:
-        users[uid] = {}
-    users[uid].update(data_update)
-    save_users(users)
-
-
 def load_text(filepath):
     """Load text from a message file."""
     try:
@@ -207,21 +166,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info(f"🆕 NEW USER JOINED: {user.first_name} {user.last_name} ({username}, ID: {user.id})")
     print(f"!!! WELCOME: {user.first_name} ({username}) joined the bot! !!!")
 
-    # Save to waitlist file (legacy)
-    waitlist_path = "/var/data/waitlist.txt" if os.path.exists("/var/data") else "waitlist.txt"
-    try:
-        with open(waitlist_path, "a", encoding="utf-8") as f:
-            f.write(f"{user.first_name} {user.last_name} ({username}) - ID: {user.id}\n")
-    except Exception as e:
-        logger.error(f"Failed to save to waitlist: {e}")
-
-    # Save to users.json (new DB for campaign targeting)
-    save_user(user.id, {
+    # Save user to Supabase
+    db.upsert_user(user.id, {
         "first_name": user.first_name,
-        "last_name": user.last_name,
+        "last_name": user.last_name or "",
         "username": username,
-        "joined_at": datetime.now().isoformat(),
-        "status": "active"
+        "status": "lead"
     })
 
     # Send Notification to Admin
@@ -243,8 +193,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     march_7_end = datetime(2026, 3, 7, 23, 59, 59)
     
     # Check if user is already a subscriber
-    subs = sm.load_subscribers()
-    is_subscriber = str(user.id) in subs and subs[str(user.id)].get("status") == "active"
+    is_subscriber = db.is_active_subscriber(user.id)
     
     if now < march_1 and not is_subscriber:
         # BEFORE March 1: Show closed-club message with remind button
@@ -329,8 +278,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         user = query.from_user
         logger.info(f"🔔 User {user.first_name} ({user.id}) opted into March 1 reminder")
         
-        # Save reminder preference to users.json
-        save_user(user.id, {
+        # Save reminder preference to Supabase
+        db.upsert_user(user.id, {
             "remind_march": True,
             "remind_opted_at": datetime.now().isoformat()
         })
@@ -452,7 +401,7 @@ async def subscribers_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if str(user_id) != str(ADMIN_ID):
         return
 
-    subs = sm.get_all_active_subscribers()
+    subs = db.get_all_active_subscribers()
     
     if not subs:
         await update.message.reply_text("📭 Нет активных подписчиков.")
@@ -461,7 +410,7 @@ async def subscribers_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     text = f"<b>👥 Активные подписчики: {len(subs)}</b>\n\n"
     for s in subs[:20]:  # Limit to 20 for readability
         expires = datetime.fromisoformat(s['expires_at']).strftime('%d.%m.%Y')
-        name = s.get('name') or s.get('email') or f"ID: {s['chat_id']}"
+        name = s.get('name') or s.get('email') or f"ID: {s['user_id']}"
         text += f"• {name} (до {expires})\n"
     
     if len(subs) > 20:
@@ -479,19 +428,19 @@ async def check_reminders_job():
         return
         
     logger.info("⏰ Running reminder check...")
-    users = sm.get_subscribers_needing_reminder()
+    subs = db.get_subscribers_needing_reminder()
     
-    for user in users:
+    for sub in subs:
         try:
             await bot_application.bot.send_message(
-                chat_id=user['chat_id'],
-                text=sm.REMINDER_TEXT,
+                chat_id=sub['user_id'],
+                text=db.REMINDER_TEXT,
                 parse_mode="HTML"
             )
-            sm.mark_reminder_sent(user['chat_id'])
-            logger.info(f"📨 Sent reminder to {user['chat_id']}")
+            db.mark_reminder_sent(sub['id'])
+            logger.info(f"📨 Sent reminder to {sub['user_id']}")
         except Exception as e:
-            logger.error(f"Failed to send reminder to {user['chat_id']}: {e}")
+            logger.error(f"Failed to send reminder to {sub['user_id']}: {e}")
 
 async def check_expiries_job():
     """Daily job: Kick expired subscribers from channel."""
@@ -499,18 +448,20 @@ async def check_expiries_job():
         return
         
     logger.info("⏰ Running expiry check...")
-    users = sm.get_expired_subscribers()
+    expired = db.get_expired_subscribers()
     
-    for user in users:
+    for sub in expired:
         try:
+            user_id = sub['user_id']
+            
             # Send warning message first
             if PAYMENT_LINK:
-                warning = sm.EXPIRY_WARNING_TEXT.format(payment_link=PAYMENT_LINK)
+                warning = db.EXPIRY_WARNING_TEXT.format(payment_link=PAYMENT_LINK)
             else:
-                warning = sm.EXPIRY_WARNING_TEXT.format(payment_link="свяжитесь с @tymuron")
+                warning = db.EXPIRY_WARNING_TEXT.format(payment_link="свяжитесь с @tymuron")
             
             await bot_application.bot.send_message(
-                chat_id=user['chat_id'],
+                chat_id=user_id,
                 text=warning,
                 parse_mode="HTML"
             )
@@ -519,26 +470,26 @@ async def check_expiries_job():
             if CHANNEL_ID:
                 await bot_application.bot.ban_chat_member(
                     chat_id=CHANNEL_ID,
-                    user_id=user['chat_id']
+                    user_id=user_id
                 )
                 # Immediately unban so they can rejoin if they pay again
                 await bot_application.bot.unban_chat_member(
                     chat_id=CHANNEL_ID,
-                    user_id=user['chat_id']
+                    user_id=user_id
                 )
-                logger.info(f"🚫 Kicked expired user {user['chat_id']} from channel")
+                logger.info(f"🚫 Kicked expired user {user_id} from channel")
             
-            sm.mark_expired(user['chat_id'])
+            db.mark_expired(user_id)
             
             # Notify admin
             if ADMIN_ID:
                 await bot_application.bot.send_message(
                     chat_id=ADMIN_ID,
-                    text=f"🚫 Удалён из канала (истекла подписка): {user.get('name') or user['chat_id']}"
+                    text=f"🚫 Удалён из канала (истекла подписка): {sub.get('name') or user_id}"
                 )
                 
         except Exception as e:
-            logger.error(f"Failed to process expiry for {user['chat_id']}: {e}")
+            logger.error(f"Failed to process expiry for {sub['user_id']}: {e}")
 
 def main() -> None:
     """Run the bot."""
@@ -575,8 +526,8 @@ def main() -> None:
     def get_subscribers_api():
         """Return list of subscriber IDs for broadcast filtering."""
         try:
-            subscribers = sm.get_all_subscribers()
-            subscriber_ids = [int(chat_id) for chat_id in subscribers.keys()]
+            subscribers = db.get_all_active_subscribers()
+            subscriber_ids = [s['user_id'] for s in subscribers]
             return jsonify({
                 "status": "ok",
                 "count": len(subscriber_ids),
@@ -593,7 +544,7 @@ def main() -> None:
             data = request.json or {}
             logger.info(f"📥 Received webhook: {data}")
             
-            parsed = sm.parse_getcourse_webhook(data)
+            parsed = db.parse_getcourse_webhook(data)
             
             if not parsed or not parsed.get('chat_id'):
                 logger.warning("Webhook missing chat_id, cannot link to Telegram user")
@@ -602,10 +553,11 @@ def main() -> None:
             # Check payment status
             status = str(parsed.get('status', '')).lower()
             if status in ['completed', 'paid', 'оплачен', 'завершен', 'success']:
-                sm.add_subscriber(
-                    chat_id=parsed['chat_id'],
+                db.add_subscription(
+                    user_id=parsed['chat_id'],
                     email=parsed.get('email'),
-                    name=parsed.get('name')
+                    name=parsed.get('name'),
+                    source='getcourse'
                 )
                 logger.info(f"✅ Payment recorded for {parsed['chat_id']}")
                 
@@ -713,25 +665,18 @@ def run():
             
             logger.info(f"🔔 Received join request from {user_id} for chat {chat_id}")
             
-            # Check if user is in our subscribers database
-            # We need to reload subscribers to be sure
-            subs = sm.load_subscribers()
-            
-            is_valid = False
-            if str(user_id) in subs:
-                user_data = subs[str(user_id)]
-                if user_data.get("status") == "active":
-                    is_valid = True
-                    logger.info(f"✅ Auto-approving {user_id} (Found in DB)")
+            # Check if user is in our subscribers database (Supabase)
+            is_valid = db.is_active_subscriber(user_id)
             
             if is_valid:
+                logger.info(f"✅ Auto-approving {user_id} (Found in Supabase)")
                 try:
                     await context.bot.approve_chat_join_request(chat_id=chat_id, user_id=user_id)
                     await context.bot.send_message(chat_id=user_id, text="✅ Ваша заявка одобрена! Добро пожаловать в клуб.")
                 except Exception as e:
                     logger.error(f"Failed to approve request for {user_id}: {e}")
             else:
-                logger.info(f"⏳ User {user_id} not found/active in DB. Ignoring request.")
+                logger.info(f"⏳ User {user_id} not found/active in Supabase. Ignoring request.")
 
         # --- HANDLERS ---
         application.add_handler(CommandHandler("start", start))
@@ -790,10 +735,13 @@ def run():
                 chat_id = None
                 
                 if token and token.startswith('tok_'):
-                    import payment_tokens as pt
-                    chat_id = pt.lookup_token(token)
-                    if chat_id:
-                        logger.info(f"🎫 Token {token} resolved to user {chat_id}")
+                    try:
+                        import payment_tokens as pt
+                        chat_id = pt.lookup_token(token)
+                        if chat_id:
+                            logger.info(f"🎫 Token {token} resolved to user {chat_id}")
+                    except ImportError:
+                        pass
                 
                 # METHOD 2: Direct tg_id (fallback)
                 if not chat_id:
@@ -804,6 +752,13 @@ def run():
                 email = get_field('email')
                 name = get_field('name')
                 
+                # METHOD 3: Email matching via Supabase (new fallback)
+                if not chat_id and email:
+                    user = db.get_user_by_email(email)
+                    if user:
+                        chat_id = user['id']
+                        logger.info(f"🔄 Matched payment to user {chat_id} by email: {email}")
+                
                 logger.info(f"💰 Parsed: token={token}, tg_id={chat_id}, status={status}, email={email}")
                 
                 if not chat_id:
@@ -813,11 +768,12 @@ def run():
                 logger.info(f"💰 Payment Webhook: ID={chat_id} Status={status} Email={email}")
                 
                 if status in ['completed', 'paid', 'оплачен', 'завершен', 'success']:
-                    # 1. Add to subscribers
-                    sm.add_subscriber(
-                        chat_id=int(chat_id),
+                    # 1. Add subscription to Supabase
+                    db.add_subscription(
+                        user_id=int(chat_id),
                         email=email,
-                        name=name
+                        name=name,
+                        source='getcourse'
                     )
 
                     # 2. Send Telegram Invite (using global application)
@@ -848,7 +804,7 @@ def run():
                     # Actually, we can just fire-and-forget logic if strictly necessary, 
                     # but since we have a running loop in another thread, we should use run_coroutine_threadsafe if possible.
                     # SIMPLER: Create a temporary loop for this thread just to send.
-                    # OR EVEN SIMPLER: The 'sm.add_subscriber' is persistent. The user will be added. 
+                    # OR EVEN SIMPLER: The 'db.add_subscription' is persistent. The user will be added. 
                     # The message sending is a bonus.
                     
                     # Hack to run async in Flask thread:
@@ -872,8 +828,7 @@ def run():
         def get_subscribers_api():
             """Return list of subscriber IDs for broadcast filtering."""
             try:
-                subs = sm.get_all_subscribers()
-                subscriber_ids = [int(k) for k in subs.keys()]
+                subscriber_ids = list(db.get_active_subscriber_ids())
                 return jsonify({
                     "count": len(subscriber_ids),
                     "subscriber_ids": subscriber_ids
