@@ -1,5 +1,6 @@
 
 import os
+import json
 import logging
 import threading
 import asyncio
@@ -145,17 +146,68 @@ def get_back_menu():
     return InlineKeyboardMarkup(keyboard)
 
 
+# --- USERS.JSON MANAGEMENT ---
+# Persistent disk on Render, local otherwise
+if os.path.exists("/var/data"):
+    _DATA_DIR = "/var/data"
+else:
+    _DATA_DIR = "."
+
+_USERS_FILE = os.path.join(_DATA_DIR, "users.json")
+
+
+def load_users():
+    """Load users database."""
+    if not os.path.exists(_USERS_FILE):
+        return {}
+    try:
+        with open(_USERS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"Error loading users.json: {e}")
+        return {}
+
+
+def save_users(data):
+    """Save users database."""
+    try:
+        with open(_USERS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Error saving users.json: {e}")
+
+
+def save_user(user_id, data_update):
+    """Update a single user record in users.json."""
+    users = load_users()
+    uid = str(user_id)
+    if uid not in users:
+        users[uid] = {}
+    users[uid].update(data_update)
+    save_users(users)
+
+
+def load_text(filepath):
+    """Load text from a message file."""
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        logger.error(f"Error loading text file {filepath}: {e}")
+        return ""
+
+
 # --- HANDLERS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Sends welcome message."""
+    """Sends welcome message with date-dependent flow."""
     user = update.effective_user
     username = f"@{user.username}" if user.username else "No Username"
     
     # Log the new user for the admin
     logger.info(f"🆕 NEW USER JOINED: {user.first_name} {user.last_name} ({username}, ID: {user.id})")
-    print(f"!!! WELCOME: {user.first_name} ({username}) joined the waitlist! !!!")
+    print(f"!!! WELCOME: {user.first_name} ({username}) joined the bot! !!!")
 
-    # Save to file
+    # Save to waitlist file (legacy)
     waitlist_path = "/var/data/waitlist.txt" if os.path.exists("/var/data") else "waitlist.txt"
     try:
         with open(waitlist_path, "a", encoding="utf-8") as f:
@@ -163,7 +215,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logger.error(f"Failed to save to waitlist: {e}")
 
-    # Send Notification to Admin (Persistence)
+    # Save to users.json (new DB for campaign targeting)
+    save_user(user.id, {
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "username": username,
+        "joined_at": datetime.now().isoformat(),
+        "status": "active"
+    })
+
+    # Send Notification to Admin
     if ADMIN_ID:
         try:
             admin_text = (
@@ -176,10 +237,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         except Exception as e:
             logger.error(f"Failed to notify admin: {e}")
 
-    await update.message.reply_html(
-        TEXT_WELCOME.format(name=user.first_name),
-        reply_markup=get_main_menu()
-    )
+    # --- Date-dependent /start flow ---
+    now = datetime.now()
+    march_1 = datetime(2026, 3, 1)
+    march_7_end = datetime(2026, 3, 7, 23, 59, 59)
+    
+    # Check if user is already a subscriber
+    subs = sm.load_subscribers()
+    is_subscriber = str(user.id) in subs and subs[str(user.id)].get("status") == "active"
+    
+    if now < march_1 and not is_subscriber:
+        # BEFORE March 1: Show closed-club message with remind button
+        closed_text = load_text("messages/msg_closed_club.txt")
+        if not closed_text:
+            closed_text = "Сейчас вход в клуб «Точка опоры» закрыт 🤍\nСледующий набор откроется 1 марта."
+        keyboard = [[InlineKeyboardButton("👉 Напомнить мне 1 марта", callback_data="remind_march")]]
+        await update.message.reply_text(
+            closed_text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
+        )
+    else:
+        # March 1–7 (open doors) or subscriber → show normal menu
+        await update.message.reply_html(
+            TEXT_WELCOME.format(name=user.first_name),
+            reply_markup=get_main_menu()
+        )
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Parses Callback Queries."""
@@ -241,6 +324,36 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
     elif data == "cabinet_dummy":
         await query.answer("Функция доступна только при активной подписке.", show_alert=True)
+    elif data == "remind_march":
+        # User clicked "Напомнить мне 1 марта"
+        user = query.from_user
+        logger.info(f"🔔 User {user.first_name} ({user.id}) opted into March 1 reminder")
+        
+        # Save reminder preference to users.json
+        save_user(user.id, {
+            "remind_march": True,
+            "remind_opted_at": datetime.now().isoformat()
+        })
+        
+        # Send confirmation
+        confirm_text = load_text("messages/msg_reminder_confirmed.txt")
+        if not confirm_text:
+            confirm_text = "Готово 🤍\nЯ напомню тебе 1 марта, когда клуб откроется для вступления."
+        
+        await query.edit_message_text(
+            text=confirm_text,
+            parse_mode="HTML"
+        )
+        
+        # Notify admin
+        if ADMIN_ID:
+            try:
+                await context.bot.send_message(
+                    chat_id=ADMIN_ID,
+                    text=f"🔔 Reminder opt-in: {user.first_name} (@{user.username or 'no_username'}) ID: {user.id}"
+                )
+            except Exception:
+                pass
 
 async def send_invoice(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
     title = "Клуб «Точка опоры»"
