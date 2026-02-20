@@ -196,16 +196,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     
     user_record = db.get_user(user.id)
     has_email = user_record and user_record.get("email")
+    is_active = db.is_active_subscriber(user.id)
 
-    if is_reregister:
+    if is_active:
         if has_email:
-            # VIP member clicking the link, but they already gave an email
             text = "Ваши данные обновлены. Спасибо, что остаетесь с нами в Клубе! 🤍"
             await update.message.reply_text(text)
             return ConversationHandler.END
         else:
-            # VIP member clicking the link, needs to give email
-            context.user_data['is_reregister'] = is_reregister
+            context.user_data['is_reregister'] = True
+            await update.message.reply_text(
+                "👋 Здравствуйте!\n\nДля того чтобы мы могли надежно привязать вашу оплату и сохранить доступ к клубу «Точка опоры», пожалуйста, отправьте в ответном сообщении ваш <b>email</b> (электронную почту), которую вы будете использовать при оплате:",
+                parse_mode="HTML"
+            )
+            return AWAITING_EMAIL
+
+    if is_reregister:
+        if has_email:
+            # Not natively tracked as active, but they have an email.
+            # Reregistering them makes them active when they hit receive_email.
+            text = "Ваши данные обновлены. Спасибо, что остаетесь с нами в Клубе! 🤍"
+            await update.message.reply_text(text)
+            return ConversationHandler.END
+        else:
+            # Complete stranger clicking VIP link
+            context.user_data['is_reregister'] = True
             await update.message.reply_text(
                 "👋 Здравствуйте!\n\nДля того чтобы мы могли надежно привязать вашу оплату и сохранить доступ к клубу «Точка опоры», пожалуйста, отправьте в ответном сообщении ваш <b>email</b> (электронную почту), которую вы будете использовать при оплате:",
                 parse_mode="HTML"
