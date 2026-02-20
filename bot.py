@@ -205,6 +205,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         )
         return AWAITING_EMAIL
     
+    # If they already have an email and they used the reregister link, confirm it
+    if is_reregister and has_email:
+        text = "Ваши данные обновлены. Спасибо, что остаетесь с нами в Клубе! 🤍"
+        await update.message.reply_text(text)
+        return ConversationHandler.END
+        
     # If they already have an email and it's not a reregister, proceed to normal flow
     await _send_welcome_flow(update, context, user, username)
     return ConversationHandler.END
