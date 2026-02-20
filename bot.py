@@ -194,6 +194,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     has_email = user_record and user_record.get("email")
 
     if is_reregister or not has_email:
+        context.user_data['is_reregister'] = is_reregister
         await update.message.reply_text(
             "👋 Здравствуйте!\n\nДля того чтобы мы могли надежно привязать вашу оплату и сохранить доступ к клубу «Точка опоры», пожалуйста, отправьте в ответном сообщении ваш <b>email</b> (электронную почту), которую вы будете использовать при оплате:",
             parse_mode="HTML"
@@ -218,14 +219,17 @@ async def receive_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     db.upsert_user(user.id, {"email": email})
     await update.message.reply_text("✅ Спасибо! Ваш email сохранен.")
     
+    is_reregister = context.user_data.pop('is_reregister', False)
+    
     # Check if they are already an active subscriber (e.g. from reregister link)
     is_subscriber = db.is_active_subscriber(user.id)
-    if is_subscriber:
+    
+    if is_subscriber or is_reregister:
         text = "Ваши данные обновлены. Спасибо, что остаетесь с нами в Клубе! 🤍"
         await update.message.reply_text(text)
         return ConversationHandler.END
     
-    # Proceed to normal welcome flow if not a current subscriber
+    # Proceed to normal welcome flow if not a current subscriber and didn't use reregister link
     await _send_welcome_flow(update, context, user, username)
     return ConversationHandler.END
 
