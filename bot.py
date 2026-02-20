@@ -187,8 +187,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         "status": "lead"
     })
 
-    # Check if this is a reregistration deep link: /start reregister
-    is_reregister = context.args and context.args[0] == "reregister"
+    # Check if this is a reregistration deep link or command
+    is_reregister = False
+    if context.args and context.args[0] == "reregister":
+        is_reregister = True
+    elif update.message and update.message.text and update.message.text.startswith('/reregister'):
+        is_reregister = True
     
     user_record = db.get_user(user.id)
     has_email = user_record and user_record.get("email")
@@ -827,7 +831,7 @@ def run():
 
         # --- HANDLERS ---
         conv_handler = ConversationHandler(
-            entry_points=[CommandHandler("start", start)],
+            entry_points=[CommandHandler("start", start), CommandHandler("reregister", start)],
             states={
                 AWAITING_EMAIL: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, receive_email)
