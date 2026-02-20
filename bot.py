@@ -197,21 +197,30 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_record = db.get_user(user.id)
     has_email = user_record and user_record.get("email")
 
-    if is_reregister or not has_email:
-        context.user_data['is_reregister'] = is_reregister
+    if is_reregister:
+        if has_email:
+            # VIP member clicking the link, but they already gave an email
+            text = "Ваши данные обновлены. Спасибо, что остаетесь с нами в Клубе! 🤍"
+            await update.message.reply_text(text)
+            return ConversationHandler.END
+        else:
+            # VIP member clicking the link, needs to give email
+            context.user_data['is_reregister'] = is_reregister
+            await update.message.reply_text(
+                "👋 Здравствуйте!\n\nДля того чтобы мы могли надежно привязать вашу оплату и сохранить доступ к клубу «Точка опоры», пожалуйста, отправьте в ответном сообщении ваш <b>email</b> (электронную почту), которую вы будете использовать при оплате:",
+                parse_mode="HTML"
+            )
+            return AWAITING_EMAIL
+
+    if not has_email:
+        # Normal waitlist lead, needs to give email
         await update.message.reply_text(
             "👋 Здравствуйте!\n\nДля того чтобы мы могли надежно привязать вашу оплату и сохранить доступ к клубу «Точка опоры», пожалуйста, отправьте в ответном сообщении ваш <b>email</b> (электронную почту), которую вы будете использовать при оплате:",
             parse_mode="HTML"
         )
         return AWAITING_EMAIL
-    
-    # If they already have an email and they used the reregister link, confirm it
-    if is_reregister and has_email:
-        text = "Ваши данные обновлены. Спасибо, что остаетесь с нами в Клубе! 🤍"
-        await update.message.reply_text(text)
-        return ConversationHandler.END
         
-    # If they already have an email and it's not a reregister, proceed to normal flow
+    # Normal lead who already gave email -> standard welcome menu
     await _send_welcome_flow(update, context, user, username)
     return ConversationHandler.END
 
