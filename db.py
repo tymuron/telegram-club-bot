@@ -228,6 +228,31 @@ def get_expired_subscribers() -> List[Dict]:
         return []
 
 
+def extend_subscription(user_id: int, days: int) -> bool:
+    """Extend the expiration date of an active subscription."""
+    client = get_client()
+    if not client:
+        return False
+    try:
+        sub = get_active_subscription(user_id)
+        if not sub:
+            return False
+        
+        current_expires = datetime.fromisoformat(sub['expires_at'])
+        new_expires = current_expires + timedelta(days=days)
+        
+        client.table("club_subscriptions") \
+            .update({"expires_at": new_expires.isoformat()}) \
+            .eq("id", sub['id']) \
+            .execute()
+            
+        logger.info(f"✅ Subscription extended by {days} days for user {user_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Error extending subscription for {user_id}: {e}")
+        return False
+
+
 def mark_expired(user_id: int) -> None:
     """Mark all active subscriptions for a user as expired."""
     client = get_client()

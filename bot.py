@@ -1,5 +1,6 @@
 
 import os
+import re
 import json
 import logging
 import threading
@@ -8,7 +9,7 @@ from datetime import datetime
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 from telegram import Update, LabeledPrice, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes, PreCheckoutQueryHandler, MessageHandler, filters, CallbackQueryHandler, ApplicationBuilder, ChatJoinRequestHandler
+from telegram.ext import Application, CommandHandler, ContextTypes, PreCheckoutQueryHandler, MessageHandler, filters, CallbackQueryHandler, ApplicationBuilder, ChatJoinRequestHandler, ConversationHandler
 from apscheduler.schedulers.background import BackgroundScheduler
 
 # Import our database layer (Supabase)
@@ -127,6 +128,13 @@ def get_join_menu(user_id: int = None):
         # Append user's Telegram ID to URL for webhook matching
         separator = "&" if "?" in PAYMENT_LINK else "?"
         tracked_url = f"{PAYMENT_LINK}{separator}tg_id={user_id}" if user_id else PAYMENT_LINK
+        
+        # Append user's email if available
+        if user_id:
+            user_data = db.get_user(user_id)
+            if user_data and user_data.get("email"):
+                tracked_url += f"&email={user_data['email']}"
+                
         keyboard.append([InlineKeyboardButton("💳 Оплатить и вступить", url=tracked_url)])
     else:
         keyboard.append([InlineKeyboardButton("🙋‍♀️ Хочу в клуб! (Лист ожидания)", callback_data="join_waitlist")])
@@ -156,15 +164,20 @@ def load_text(filepath):
         return ""
 
 
-# --- HANDLERS ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Sends welcome message with date-dependent flow."""
+# --- CONVERSATION STATES ---
+AWAITING_EMAIL = 1
+
+def is_valid_email(email: str) -> bool:
+    pattern = r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$"
+    return re.match(pattern, email) is not None
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Sends welcome message and checks for email collection."""
     user = update.effective_user
     username = f"@{user.username}" if user.username else "No Username"
     
     # Log the new user for the admin
-    logger.info(f"🆕 NEW USER JOINED: {user.first_name} {user.last_name} ({username}, ID: {user.id})")
-    print(f"!!! WELCOME: {user.first_name} ({username}) joined the bot! !!!")
+    logger.info(f"🆕 USER INTERACTION: {user.first_name} {user.last_name} ({username}, ID: {user.id})")
 
     # Save user to Supabase
     db.upsert_user(user.id, {
@@ -174,11 +187,60 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "status": "lead"
     })
 
+    # Check if this is a reregistration deep link: /start reregister
+    is_reregister = context.args and context.args[0] == "reregister"
+    
+    user_record = db.get_user(user.id)
+    has_email = user_record and user_record.get("email")
+
+    if is_reregister or not has_email:
+        await update.message.reply_text(
+            "👋 Здравствуйте!\n\nДля того чтобы мы могли надежно привязать вашу оплату и сохранить доступ к клубу «Точка опоры», пожалуйста, отправьте в ответном сообщении ваш <b>email</b> (электронную почту), которую вы будете использовать при оплате:",
+            parse_mode="HTML"
+        )
+        return AWAITING_EMAIL
+    
+    # If they already have an email and it's not a reregister, proceed to normal flow
+    await _send_welcome_flow(update, context, user, username)
+    return ConversationHandler.END
+
+async def receive_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Gets the email, validates it, and saves it."""
+    email = update.message.text.strip()
+    user = update.effective_user
+    username = f"@{user.username}" if user.username else "No Username"
+    
+    if not is_valid_email(email):
+        await update.message.reply_text("❌ Кажется, в email опечатка.\nПожалуйста, введите корректный адрес (например, name@mail.ru):")
+        return AWAITING_EMAIL
+        
+    # Valid email! Save it.
+    db.upsert_user(user.id, {"email": email})
+    await update.message.reply_text("✅ Спасибо! Ваш email сохранен.")
+    
+    # Check if they are already an active subscriber (e.g. from reregister link)
+    is_subscriber = db.is_active_subscriber(user.id)
+    if is_subscriber:
+        text = "Ваши данные обновлены. Спасибо, что остаетесь с нами в Клубе! 🤍"
+        await update.message.reply_text(text)
+        return ConversationHandler.END
+    
+    # Proceed to normal welcome flow if not a current subscriber
+    await _send_welcome_flow(update, context, user, username)
+    return ConversationHandler.END
+
+async def cancel_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Cancels the email collection flow."""
+    await update.message.reply_text("Отменено. Без email мы не сможем привязать вашу оплату автоматически. Чтобы попробовать снова, отправьте /start.")
+    return ConversationHandler.END
+
+async def _send_welcome_flow(update: Update, context: ContextTypes.DEFAULT_TYPE, user, username) -> None:
+    """The original welcome logic moved into a helper."""
     # Send Notification to Admin
     if ADMIN_ID:
         try:
             admin_text = (
-                f"📝 <b>New Lead!</b>\n"
+                f"📝 <b>New interaction!</b>\n"
                 f"Name: {user.first_name} {user.last_name}\n"
                 f"Username: {username}\n"
                 f"ID: <code>{user.id}</code>"
@@ -190,10 +252,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # --- Date-dependent /start flow ---
     now = datetime.now()
     march_1 = datetime(2026, 3, 1)
-    march_7_end = datetime(2026, 3, 7, 23, 59, 59)
     
     # Check if user is already a subscriber
     is_subscriber = db.is_active_subscriber(user.id)
+    
+    # message could be from update.message or update.callback_query.message if called from elsewhere
+    message_target = update.message if update.message else update.callback_query.message
     
     if now < march_1 and not is_subscriber:
         # BEFORE March 1: Show closed-club message with remind button
@@ -201,14 +265,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not closed_text:
             closed_text = "Сейчас вход в клуб «Точка опоры» закрыт 🤍\nСледующий набор откроется 1 марта."
         keyboard = [[InlineKeyboardButton("👉 Напомнить мне 1 марта", callback_data="remind_march")]]
-        await update.message.reply_text(
+        await message_target.reply_text(
             closed_text,
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="HTML"
         )
     else:
         # March 1–7 (open doors) or subscriber → show normal menu
-        await update.message.reply_html(
+        await message_target.reply_html(
             TEXT_WELCOME.format(name=user.first_name),
             reply_markup=get_main_menu()
         )
@@ -303,6 +367,34 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 )
             except Exception:
                 pass
+                
+    elif data.startswith("admin_keep_"):
+        if str(update.effective_user.id) != str(ADMIN_ID):
+            return
+        user_id = int(data.split("_")[2])
+        # Extend by 7 days
+        success = db.extend_subscription(user_id, 7)
+        if success:
+            await query.edit_message_text(f"✅ Продлено на 7 дней для пользователя {user_id}.")
+        else:
+            await query.edit_message_text(f"❌ Ошибка продления для {user_id} (подписка не найдена в активных).")
+            
+    elif data.startswith("admin_kick_"):
+        if str(update.effective_user.id) != str(ADMIN_ID):
+            return
+        user_id = int(data.split("_")[2])
+        # Kick from channel
+        if CHANNEL_ID:
+            try:
+                await context.bot.ban_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+                await context.bot.unban_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+            except Exception as e:
+                logger.error(f"Failed to kick user {user_id}: {e}")
+        db.mark_expired(user_id)
+        
+        user_data = db.get_user(user_id)
+        name = user_data.get('first_name', str(user_id)) if user_data else str(user_id)
+        await query.edit_message_text(f"❌ Пользователь {name} ({user_id}) удалён из канала.")
 
 async def send_invoice(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
     title = "Клуб «Точка опоры»"
@@ -418,6 +510,62 @@ async def subscribers_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     
     await update.message.reply_html(text)
 
+async def link_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """(Admin Only) Manually link an email to a tg_id."""
+    user_id = update.effective_user.id
+    if str(user_id) != str(ADMIN_ID):
+        return
+        
+    args = context.args
+    if len(args) != 2:
+        await update.message.reply_text("Использование: /link [tg_id] [email]")
+        return
+        
+    target_id, email = args[0], args[1]
+    
+    if not target_id.isdigit():
+        await update.message.reply_text("tg_id должен быть числом.")
+        return
+        
+    db.upsert_user(int(target_id), {"email": email})
+    await update.message.reply_text(f"✅ Email {email} привязан к ID {target_id}")
+
+async def renew_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """(Admin Only) Manually add/renew a subscription."""
+    user_id = update.effective_user.id
+    if str(user_id) != str(ADMIN_ID):
+        return
+        
+    args = context.args
+    if len(args) != 1:
+        await update.message.reply_text("Использование: /renew [tg_id или email]")
+        return
+        
+    target = args[0]
+    target_id = None
+    
+    if target.isdigit():
+        target_id = int(target)
+    else:
+        user = db.get_user_by_email(target)
+        if user:
+            target_id = user['id']
+            
+    if not target_id:
+        await update.message.reply_text(f"❌ Пользователь {target} не найден.")
+        return
+        
+    success = db.add_subscription(
+        user_id=target_id,
+        email=target if not target.isdigit() else None,
+        source='manual_admin'
+    )
+    
+    if success:
+        await update.message.reply_text(f"✅ Подписка успешно обновлена/добавлена для ID {target_id}")
+    else:
+        await update.message.reply_text(f"❌ Произошла ошибка при обновлении подписки.")
+
 # --- Global Application Reference for Scheduler ---
 bot_application = None
 
@@ -443,16 +591,17 @@ async def check_reminders_job():
             logger.error(f"Failed to send reminder to {sub['user_id']}: {e}")
 
 async def check_expiries_job():
-    """Daily job: Kick expired subscribers from channel."""
+    """Daily job: Ask Admin to verify expired subscribers before kicking."""
     if not bot_application:
         return
         
-    logger.info("⏰ Running expiry check...")
+    logger.info("⏰ Running expiry check (admin verification)...")
     expired = db.get_expired_subscribers()
     
     for sub in expired:
         try:
             user_id = sub['user_id']
+            name = sub.get('name') or sub.get('email') or str(user_id)
             
             # Send warning message first
             if PAYMENT_LINK:
@@ -466,27 +615,26 @@ async def check_expiries_job():
                 parse_mode="HTML"
             )
             
-            # Kick from channel
-            if CHANNEL_ID:
-                await bot_application.bot.ban_chat_member(
-                    chat_id=CHANNEL_ID,
-                    user_id=user_id
-                )
-                # Immediately unban so they can rejoin if they pay again
-                await bot_application.bot.unban_chat_member(
-                    chat_id=CHANNEL_ID,
-                    user_id=user_id
-                )
-                logger.info(f"🚫 Kicked expired user {user_id} from channel")
-            
-            db.mark_expired(user_id)
-            
-            # Notify admin
+            # INSTEAD OF KICKING, ask admin for confirmation
             if ADMIN_ID:
+                keyboard = [
+                    [InlineKeyboardButton("✅ Оставить (+7 дней)", callback_data=f"admin_keep_{user_id}")],
+                    [InlineKeyboardButton("❌ Удалить из канала", callback_data=f"admin_kick_{user_id}")]
+                ]
                 await bot_application.bot.send_message(
                     chat_id=ADMIN_ID,
-                    text=f"🚫 Удалён из канала (истекла подписка): {sub.get('name') or user_id}"
+                    text=f"⚠️ <b>Проверка удаления</b>\n\nПодписка истекла у:\n👤 {name} (ID: <code>{user_id}</code>)\n\nУдалить пользователя или дать 7 дней в ожидании оплаты?",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode="HTML"
                 )
+            else:
+                # Kick from channel if no admin configured
+                if CHANNEL_ID:
+                    await bot_application.bot.ban_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+                    await bot_application.bot.unban_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+                    logger.info(f"🚫 Kicked expired user {user_id} from channel")
+                
+                db.mark_expired(user_id)
                 
         except Exception as e:
             logger.error(f"Failed to process expiry for {sub['user_id']}: {e}")
@@ -679,7 +827,20 @@ def run():
                 logger.info(f"⏳ User {user_id} not found/active in Supabase. Ignoring request.")
 
         # --- HANDLERS ---
-        application.add_handler(CommandHandler("start", start))
+        conv_handler = ConversationHandler(
+            entry_points=[CommandHandler("start", start)],
+            states={
+                AWAITING_EMAIL: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, receive_email)
+                ],
+            },
+            fallbacks=[CommandHandler("cancel", cancel_email)],
+        )
+        application.add_handler(conv_handler)
+
+        application.add_handler(CommandHandler("link", link_cmd))
+        application.add_handler(CommandHandler("renew", renew_cmd))
+
         application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
         application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
         application.add_handler(CallbackQueryHandler(menu_callback))
