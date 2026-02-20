@@ -165,7 +165,7 @@ def get_active_subscription(user_id: int) -> Optional[Dict]:
             .limit(1) \
             .maybe_single() \
             .execute()
-        return result.data
+        return result.data if result else None
     except Exception as e:
         logger.error(f"Error getting subscription for {user_id}: {e}")
         return None
