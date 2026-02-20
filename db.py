@@ -98,7 +98,7 @@ def get_all_users() -> List[Dict]:
 
 EXPIRY_DAYS = 30
 REMINDER_DAY = 27
-GRACE_DAYS = 1  # 1 day grace after expiry before kicking
+GRACE_DAYS = 3  # 3 days grace after expiry before kicking (awaiting late recurring webhooks)
 
 
 def add_subscription(user_id: int, email: str = None, name: str = None, 

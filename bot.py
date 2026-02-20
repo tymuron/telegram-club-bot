@@ -591,11 +591,11 @@ async def check_reminders_job():
             logger.error(f"Failed to send reminder to {sub['user_id']}: {e}")
 
 async def check_expiries_job():
-    """Daily job: Ask Admin to verify expired subscribers before kicking."""
+    """Daily job: Automatically kick expired subscribers after 3-day grace period."""
     if not bot_application:
         return
         
-    logger.info("⏰ Running expiry check (admin verification)...")
+    logger.info("⏰ Running expiry check (auto-kick after 3 days)...")
     expired = db.get_expired_subscribers()
     
     for sub in expired:
@@ -603,7 +603,7 @@ async def check_expiries_job():
             user_id = sub['user_id']
             name = sub.get('name') or sub.get('email') or str(user_id)
             
-            # Send warning message first
+            # Send final notice message
             if PAYMENT_LINK:
                 warning = db.EXPIRY_WARNING_TEXT.format(payment_link=PAYMENT_LINK)
             else:
@@ -615,26 +615,21 @@ async def check_expiries_job():
                 parse_mode="HTML"
             )
             
-            # INSTEAD OF KICKING, ask admin for confirmation
+            # Automatically kick from channel
+            if CHANNEL_ID:
+                await bot_application.bot.ban_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+                await bot_application.bot.unban_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+                logger.info(f"🚫 Auto-kicked expired user {user_id} from channel")
+            
+            db.mark_expired(user_id)
+            
+            # Notify Admin of the action
             if ADMIN_ID:
-                keyboard = [
-                    [InlineKeyboardButton("✅ Оставить (+7 дней)", callback_data=f"admin_keep_{user_id}")],
-                    [InlineKeyboardButton("❌ Удалить из канала", callback_data=f"admin_kick_{user_id}")]
-                ]
                 await bot_application.bot.send_message(
                     chat_id=ADMIN_ID,
-                    text=f"⚠️ <b>Проверка удаления</b>\n\nПодписка истекла у:\n👤 {name} (ID: <code>{user_id}</code>)\n\nУдалить пользователя или дать 7 дней в ожидании оплаты?",
-                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    text=f"🚫 <b>Автоматическое удаление</b>\n\nИстекла подписка (и прошло 3 дня):\n👤 {name} (ID: <code>{user_id}</code>)\nПользователь удалён из канала.",
                     parse_mode="HTML"
                 )
-            else:
-                # Kick from channel if no admin configured
-                if CHANNEL_ID:
-                    await bot_application.bot.ban_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
-                    await bot_application.bot.unban_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
-                    logger.info(f"🚫 Kicked expired user {user_id} from channel")
-                
-                db.mark_expired(user_id)
                 
         except Exception as e:
             logger.error(f"Failed to process expiry for {sub['user_id']}: {e}")
