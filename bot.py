@@ -781,8 +781,11 @@ def main() -> None:
                                 logger.info(f"✅ Admin notified about {chat_id}")
                         except Exception as e:
                             logger.error(f"Failed to send messages: {e}")
-                    
-                    asyncio.run(do_send())
+                            
+                    try:
+                        asyncio.run(do_send())
+                    except Exception as e:
+                        logger.error(f"Asyncio run failed in thread: {e}")
                 
                 thread = threading.Thread(target=send_messages)
                 thread.start()
@@ -909,6 +912,7 @@ def run():
         app = Flask(__name__)
         
         @app.route(WEBHOOK_PATH, methods=['GET', 'POST'])
+        @app.route('/webhook/payment', methods=['POST'])
         def webhook():
              """Handle incoming GetCourse payments."""
              try:
@@ -994,17 +998,61 @@ def run():
                         except Exception as e:
                             logger.error(f"Failed to send invite: {e}")
 
-                    # Run async send in background thread loop? 
-                    # Actually, we can just fire-and-forget logic if strictly necessary, 
-                    # but since we have a running loop in another thread, we should use run_coroutine_threadsafe if possible.
-                    # SIMPLER: Create a temporary loop for this thread just to send.
-                    # OR EVEN SIMPLER: The 'db.add_subscription' is persistent. The user will be added. 
-                    # The message sending is a bonus.
+                    # Run the async function in the running bot's event loop
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        # If no running loop in this thread, find the bot application's loop
+                        # Assuming the bot is running in its own thread with an active loop
+                        loop = None
+                        
+                    # We will use another approach instead of creating a fresh loop which
+                    # causes issues with python-telegram-bot
+                    import threading
+                    def send_in_background():
+                        asyncio.run(send_invite())
+                        
+                    threading.Thread(target=send_in_background).start()
+
+                elif status in ['expired', 'завершена', 'cancelled', 'canceled', 'отменен', 'отменена']:
+                    db.mark_expired(int(chat_id))
+                    logger.info(f"🚫 Webhook: User {chat_id} subscription expired/cancelled")
                     
-                    # Hack to run async in Flask thread:
-                    loop = asyncio.new_event_loop()
-                    loop.run_until_complete(send_invite())
-                    loop.close()
+                    async def send_kick():
+                        try:
+                            # Send final notice message
+                            if PAYMENT_LINK:
+                                warning = db.EXPIRY_WARNING_TEXT.format(payment_link=PAYMENT_LINK)
+                            else:
+                                warning = db.EXPIRY_WARNING_TEXT.format(payment_link="свяжитесь с @tymuron")
+                                
+                            await application.bot.send_message(
+                                chat_id=chat_id,
+                                text=warning,
+                                parse_mode="HTML"
+                            )
+                            # Automatically kick from channel
+                            if CHANNEL_ID:
+                                await application.bot.ban_chat_member(chat_id=CHANNEL_ID, user_id=chat_id)
+                                await application.bot.unban_chat_member(chat_id=CHANNEL_ID, user_id=chat_id)
+                                logger.info(f"🚫 Auto-kicked {chat_id} from channel via Webhook")
+                                
+                            # Notify Admin
+                            if ADMIN_ID:
+                                name_str = name or str(chat_id)
+                                await application.bot.send_message(
+                                    chat_id=ADMIN_ID,
+                                    text=f"🚫 Автоматическое удаление (через вебхук GC)\nИстекла подписка:\n👤 {name_str} (ID: <code>{chat_id}</code>)",
+                                    parse_mode="HTML"
+                                )
+                        except Exception as e:
+                            logger.error(f"Failed to process kick: {e}")
+
+                    import threading
+                    def kick_in_background():
+                        asyncio.run(send_kick())
+                        
+                    threading.Thread(target=kick_in_background).start()
 
                 return jsonify({"status": "ok"}), 200
 
