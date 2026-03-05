@@ -267,6 +267,61 @@ def get_all_expired_and_overdue() -> List[Dict]:
         return []
 
 
+def set_expiry_warning(user_id: int) -> None:
+    """Mark that a user has been warned about expiry (sets warned_at timestamp)."""
+    client = get_client()
+    if not client:
+        return
+    try:
+        client.table("club_subscriptions") \
+            .update({"warned_at": datetime.now().isoformat()}) \
+            .eq("user_id", user_id) \
+            .eq("status", "active") \
+            .execute()
+    except Exception as e:
+        logger.error(f"Error setting expiry warning for {user_id}: {e}")
+
+
+def get_warned_and_ready_to_kick(hours: int = 24) -> List[Dict]:
+    """Get users who were warned 24+ hours ago but still have expired active subs."""
+    client = get_client()
+    if not client:
+        return []
+    try:
+        now = datetime.now()
+        cutoff = (now - timedelta(hours=hours)).isoformat()
+        result = client.table("club_subscriptions") \
+            .select("*") \
+            .eq("status", "active") \
+            .lt("expires_at", now.isoformat()) \
+            .not_.is_("warned_at", "null") \
+            .lt("warned_at", cutoff) \
+            .execute()
+        return result.data or []
+    except Exception as e:
+        logger.error(f"Error getting warned subs: {e}")
+        return []
+
+
+def get_expired_not_warned() -> List[Dict]:
+    """Get expired active subs that haven't been warned yet."""
+    client = get_client()
+    if not client:
+        return []
+    try:
+        now = datetime.now().isoformat()
+        result = client.table("club_subscriptions") \
+            .select("*") \
+            .eq("status", "active") \
+            .lt("expires_at", now) \
+            .is_("warned_at", "null") \
+            .execute()
+        return result.data or []
+    except Exception as e:
+        logger.error(f"Error getting unwarned expired subs: {e}")
+        return []
+
+
 def extend_subscription(user_id: int, days: int) -> bool:
     """Extend the expiration date of an active subscription."""
     client = get_client()

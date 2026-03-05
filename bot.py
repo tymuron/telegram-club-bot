@@ -606,39 +606,49 @@ async def renew_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 # --- /kickexpired Admin Command ---
 async def kickexpired_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """(Admin Only) Immediately kick ALL users with expired subscriptions."""
+    """(Admin Only) Two-phase kick: Phase 1 warns, Phase 2 kicks after 24h."""
     user_id = update.effective_user.id
     if str(user_id) != str(ADMIN_ID):
         return
 
-    await update.message.reply_text("⏳ Ищу просроченные подписки...")
+    await update.message.reply_text("⏳ Проверяю подписки...")
     
-    expired = db.get_all_expired_and_overdue()
+    # PHASE 1: Warn users who haven't been warned yet
+    not_warned = db.get_expired_not_warned()
+    warned_count = 0
     
-    if not expired:
-        await update.message.reply_text("✅ Нет просроченных подписок. Все в порядке!")
-        return
+    for sub in not_warned:
+        sub_user_id = sub['user_id']
+        try:
+            await context.bot.send_message(
+                chat_id=sub_user_id,
+                text=db.EXPIRY_WARNING_TEXT,
+                reply_markup=_renew_button()
+            )
+        except Exception:
+            pass  # User may have blocked the bot
+        db.set_expiry_warning(sub_user_id)
+        warned_count += 1
     
-    await update.message.reply_text(f"🔍 Найдено {len(expired)} просроченных подписок. Начинаю удаление...")
-    
+    # PHASE 2: Kick users who were warned 24+ hours ago
+    ready_to_kick = db.get_warned_and_ready_to_kick(hours=24)
     kicked = 0
     failed = 0
     already_gone = 0
     
-    for sub in expired:
+    for sub in ready_to_kick:
         sub_user_id = sub['user_id']
-        name = sub.get('name') or sub.get('email') or str(sub_user_id)
         
         try:
-            # Send expiry notice
+            # Final message before kick
             try:
                 await context.bot.send_message(
                     chat_id=sub_user_id,
-                    text=db.EXPIRY_WARNING_TEXT,
+                    text="❌ Вы не продлили подписку. Доступ закрыт.\nЧтобы вернуться — оплатите снова:",
                     reply_markup=_renew_button()
                 )
             except Exception:
-                pass  # User may have blocked the bot
+                pass
             
             # Kick from channel
             if CHANNEL_ID:
@@ -662,12 +672,21 @@ async def kickexpired_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             logger.error(f"Error processing {sub_user_id}: {e}")
     
     report = (
-        f"✅ <b>Массовое удаление завершено</b>\n\n"
-        f"🚫 Удалено из канала: {kicked}\n"
-        f"👻 Уже не в канале: {already_gone}\n"
-        f"❌ Ошибки: {failed}\n"
-        f"📊 Всего обработано: {len(expired)}"
+        f"📊 <b>Результат /kickexpired</b>\n\n"
+        f"⚠️ <b>Фаза 1 — Предупреждения:</b>\n"
+        f"   Отправлено предупреждений: {warned_count}\n\n"
+        f"🚫 <b>Фаза 2 — Удаление (предупреждены 24ч+ назад):</b>\n"
+        f"   Удалено из канала: {kicked}\n"
+        f"   Уже не в канале: {already_gone}\n"
+        f"   Ошибки: {failed}\n"
+        f"   Всего удалено: {len(ready_to_kick)}"
     )
+    
+    if warned_count > 0 and len(ready_to_kick) == 0:
+        report += "\n\n💡 Предупреждения отправлены! Запустите /kickexpired ещё раз через 24 часа чтобы удалить тех, кто не продлил."
+    elif warned_count == 0 and len(ready_to_kick) == 0:
+        report += "\n\n✅ Нет просроченных подписок. Все в порядке!"
+    
     await update.message.reply_html(report)
 
 # --- Global Application Reference for Scheduler ---
