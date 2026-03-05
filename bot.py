@@ -604,16 +604,88 @@ async def renew_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     else:
         await update.message.reply_text(f"❌ Произошла ошибка при обновлении подписки.")
 
+# --- /kickexpired Admin Command ---
+async def kickexpired_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """(Admin Only) Immediately kick ALL users with expired subscriptions."""
+    user_id = update.effective_user.id
+    if str(user_id) != str(ADMIN_ID):
+        return
+
+    await update.message.reply_text("⏳ Ищу просроченные подписки...")
+    
+    expired = db.get_all_expired_and_overdue()
+    
+    if not expired:
+        await update.message.reply_text("✅ Нет просроченных подписок. Все в порядке!")
+        return
+    
+    await update.message.reply_text(f"🔍 Найдено {len(expired)} просроченных подписок. Начинаю удаление...")
+    
+    kicked = 0
+    failed = 0
+    already_gone = 0
+    
+    for sub in expired:
+        sub_user_id = sub['user_id']
+        name = sub.get('name') or sub.get('email') or str(sub_user_id)
+        
+        try:
+            # Send expiry notice
+            try:
+                await context.bot.send_message(
+                    chat_id=sub_user_id,
+                    text=db.EXPIRY_WARNING_TEXT,
+                    reply_markup=_renew_button()
+                )
+            except Exception:
+                pass  # User may have blocked the bot
+            
+            # Kick from channel
+            if CHANNEL_ID:
+                try:
+                    await context.bot.ban_chat_member(chat_id=CHANNEL_ID, user_id=sub_user_id)
+                    await context.bot.unban_chat_member(chat_id=CHANNEL_ID, user_id=sub_user_id)
+                    kicked += 1
+                except Exception as e:
+                    err_str = str(e).lower()
+                    if 'user not found' in err_str or 'not a member' in err_str or 'PARTICIPANT_ID_INVALID' in err_str:
+                        already_gone += 1
+                    else:
+                        failed += 1
+                        logger.error(f"Failed to kick {sub_user_id}: {e}")
+            
+            # Mark expired in DB
+            db.mark_expired(sub_user_id)
+            
+        except Exception as e:
+            failed += 1
+            logger.error(f"Error processing {sub_user_id}: {e}")
+    
+    report = (
+        f"✅ <b>Массовое удаление завершено</b>\n\n"
+        f"🚫 Удалено из канала: {kicked}\n"
+        f"👻 Уже не в канале: {already_gone}\n"
+        f"❌ Ошибки: {failed}\n"
+        f"📊 Всего обработано: {len(expired)}"
+    )
+    await update.message.reply_html(report)
+
 # --- Global Application Reference for Scheduler ---
 bot_application = None
 
 # --- Scheduler Jobs ---
+def _renew_button():
+    """Create the inline '✅ ПРОДЛИТЬ ПОДПИСКУ' button."""
+    if PAYMENT_LINK:
+        return InlineKeyboardMarkup([[InlineKeyboardButton("✅ ПРОДЛИТЬ ПОДПИСКУ", url=PAYMENT_LINK)]])
+    return None
+
 async def check_reminders_job():
-    """Daily job: Send reminders to Day 27 subscribers."""
+    """Daily job: Send Day-27 reminders ('Ваша подписка закончится через 3 дня!')"""
     if not bot_application:
         return
         
-    logger.info("⏰ Running reminder check...")
+    logger.info("⏰ Running Day-27 reminder check...")
     subs = db.get_subscribers_needing_reminder()
     
     for sub in subs:
@@ -621,19 +693,38 @@ async def check_reminders_job():
             await bot_application.bot.send_message(
                 chat_id=sub['user_id'],
                 text=db.REMINDER_TEXT,
-                parse_mode="HTML"
+                reply_markup=_renew_button()
             )
             db.mark_reminder_sent(sub['id'])
-            logger.info(f"📨 Sent reminder to {sub['user_id']}")
+            logger.info(f"📨 Day-27 reminder sent to {sub['user_id']}")
         except Exception as e:
             logger.error(f"Failed to send reminder to {sub['user_id']}: {e}")
 
-async def check_expiries_job():
-    """Daily job: Automatically kick expired subscribers after 3-day grace period."""
+async def check_tomorrow_reminder_job():
+    """Job: Send Day-29 reminders ('Ваша подписка закончится через день!')"""
     if not bot_application:
         return
         
-    logger.info("⏰ Running expiry check (auto-kick after 3 days)...")
+    logger.info("⏰ Running Day-29 (tomorrow) reminder check...")
+    subs = db.get_subscribers_expiring_tomorrow()
+    
+    for sub in subs:
+        try:
+            await bot_application.bot.send_message(
+                chat_id=sub['user_id'],
+                text=db.REMINDER_TOMORROW_TEXT,
+                reply_markup=_renew_button()
+            )
+            logger.info(f"📨 Day-29 reminder sent to {sub['user_id']}")
+        except Exception as e:
+            logger.error(f"Failed to send tomorrow reminder to {sub['user_id']}: {e}")
+
+async def check_expiries_job():
+    """Job: Send expiry notice + kick expired subscribers."""
+    if not bot_application:
+        return
+        
+    logger.info("⏰ Running expiry check (auto-kick)...")
     expired = db.get_expired_subscribers()
     
     for sub in expired:
@@ -641,31 +732,29 @@ async def check_expiries_job():
             user_id = sub['user_id']
             name = sub.get('name') or sub.get('email') or str(user_id)
             
-            # Send final notice message
-            if PAYMENT_LINK:
-                warning = db.EXPIRY_WARNING_TEXT.format(payment_link=PAYMENT_LINK)
-            else:
-                warning = db.EXPIRY_WARNING_TEXT.format(payment_link="свяжитесь с @tymuron")
-            
+            # Send clean expiry message with renew button
             await bot_application.bot.send_message(
                 chat_id=user_id,
-                text=warning,
-                parse_mode="HTML"
+                text=db.EXPIRY_WARNING_TEXT,
+                reply_markup=_renew_button()
             )
             
-            # Automatically kick from channel
+            # Kick from channel
             if CHANNEL_ID:
-                await bot_application.bot.ban_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
-                await bot_application.bot.unban_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
-                logger.info(f"🚫 Auto-kicked expired user {user_id} from channel")
+                try:
+                    await bot_application.bot.ban_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+                    await bot_application.bot.unban_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+                    logger.info(f"🚫 Auto-kicked expired user {user_id} from channel")
+                except Exception as e:
+                    logger.error(f"Failed to kick {user_id} from channel: {e}")
             
             db.mark_expired(user_id)
             
-            # Notify Admin of the action
+            # Notify Admin
             if ADMIN_ID:
                 await bot_application.bot.send_message(
                     chat_id=ADMIN_ID,
-                    text=f"🚫 <b>Автоматическое удаление</b>\n\nИстекла подписка (и прошло 3 дня):\n👤 {name} (ID: <code>{user_id}</code>)\nПользователь удалён из канала.",
+                    text=f"🚫 <b>Автоматическое удаление</b>\n\n👤 {name} (ID: <code>{user_id}</code>)\nПодписка истекла → удалён из канала.",
                     parse_mode="HTML"
                 )
                 
@@ -821,8 +910,9 @@ def run():
             asyncio.run(coro_func())
         return wrapper
     
-    scheduler.add_job(run_async_job(check_reminders_job), 'cron', hour=10, minute=0)  # 10:00 AM daily
-    scheduler.add_job(run_async_job(check_expiries_job), 'cron', hour=10, minute=30)  # 10:30 AM daily
+    scheduler.add_job(run_async_job(check_reminders_job), 'interval', hours=4)  # Every 4 hours
+    scheduler.add_job(run_async_job(check_tomorrow_reminder_job), 'interval', hours=4)  # Every 4 hours
+    scheduler.add_job(run_async_job(check_expiries_job), 'interval', hours=4)  # Every 4 hours
     
     # --- CAMPAIGN AUTOPILOT ---
     # Check for scheduled broadcast messages every minute
@@ -876,6 +966,7 @@ def run():
 
         application.add_handler(CommandHandler("link", link_cmd))
         application.add_handler(CommandHandler("renew", renew_cmd))
+        application.add_handler(CommandHandler("kickexpired", kickexpired_cmd))
 
         application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
         application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
@@ -1020,18 +1111,17 @@ def run():
                     
                     async def send_kick():
                         try:
-                            # Send final notice message
+                            # Send clean expiry message with renew button
+                            renew_markup = None
                             if PAYMENT_LINK:
-                                warning = db.EXPIRY_WARNING_TEXT.format(payment_link=PAYMENT_LINK)
-                            else:
-                                warning = db.EXPIRY_WARNING_TEXT.format(payment_link="свяжитесь с @tymuron")
+                                renew_markup = InlineKeyboardMarkup([[InlineKeyboardButton("✅ ПРОДЛИТЬ ПОДПИСКУ", url=PAYMENT_LINK)]])
                                 
                             await application.bot.send_message(
                                 chat_id=chat_id,
-                                text=warning,
-                                parse_mode="HTML"
+                                text=db.EXPIRY_WARNING_TEXT,
+                                reply_markup=renew_markup
                             )
-                            # Automatically kick from channel
+                            # Kick from channel
                             if CHANNEL_ID:
                                 await application.bot.ban_chat_member(chat_id=CHANNEL_ID, user_id=chat_id)
                                 await application.bot.unban_chat_member(chat_id=CHANNEL_ID, user_id=chat_id)
@@ -1042,7 +1132,7 @@ def run():
                                 name_str = name or str(chat_id)
                                 await application.bot.send_message(
                                     chat_id=ADMIN_ID,
-                                    text=f"🚫 Автоматическое удаление (через вебхук GC)\nИстекла подписка:\n👤 {name_str} (ID: <code>{chat_id}</code>)",
+                                    text=f"🚫 <b>Удаление (вебхук GC)</b>\n👤 {name_str} (ID: <code>{chat_id}</code>)",
                                     parse_mode="HTML"
                                 )
                         except Exception as e:

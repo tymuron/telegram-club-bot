@@ -228,6 +228,45 @@ def get_expired_subscribers() -> List[Dict]:
         return []
 
 
+def get_subscribers_expiring_tomorrow() -> List[Dict]:
+    """Get active subscribers whose subscription expires within 24-48 hours (for Day 29 reminder)."""
+    client = get_client()
+    if not client:
+        return []
+    try:
+        now = datetime.now()
+        tomorrow_start = (now + timedelta(hours=24)).isoformat()
+        tomorrow_end = (now + timedelta(hours=48)).isoformat()
+        result = client.table("club_subscriptions") \
+            .select("*") \
+            .eq("status", "active") \
+            .gte("expires_at", tomorrow_start) \
+            .lte("expires_at", tomorrow_end) \
+            .execute()
+        return result.data or []
+    except Exception as e:
+        logger.error(f"Error getting tomorrow-expiring subs: {e}")
+        return []
+
+
+def get_all_expired_and_overdue() -> List[Dict]:
+    """Get ALL active subscriptions where expires_at < now (no grace period). For mass-kick."""
+    client = get_client()
+    if not client:
+        return []
+    try:
+        now = datetime.now().isoformat()
+        result = client.table("club_subscriptions") \
+            .select("*") \
+            .eq("status", "active") \
+            .lt("expires_at", now) \
+            .execute()
+        return result.data or []
+    except Exception as e:
+        logger.error(f"Error getting overdue subs: {e}")
+        return []
+
+
 def extend_subscription(user_id: int, days: int) -> bool:
     """Extend the expiration date of an active subscription."""
     client = get_client()
@@ -451,26 +490,11 @@ def parse_getcourse_webhook(data: dict) -> Optional[Dict]:
 
 
 # ============================================
-# REMINDER TEXT TEMPLATES
+# REMINDER TEXT TEMPLATES (Mandala-bot style)
 # ============================================
 
-REMINDER_TEXT = """⏰ <b>Напоминание о подписке</b>
+REMINDER_TEXT = "Ваша подписка закончится через 3 дня!"
 
-Привет! Ваша подписка на Клуб «Точка Опоры» продлится через <b>3 дня</b>.
+REMINDER_TOMORROW_TEXT = "Ваша подписка закончится через день!"
 
-Если у вас включен автоплатёж — всё произойдёт автоматически. 
-Если нет — не забудьте продлить, чтобы не потерять доступ.
-
-💳 Остались вопросы? Напишите @tymuron
-"""
-
-EXPIRY_WARNING_TEXT = """⚠️ <b>Подписка истекла</b>
-
-К сожалению, ваша подписка на Клуб «Точка Опоры» закончилась.
-
-Чтобы продолжить получать материалы и оставаться в нашем кругу, пожалуйста, продлите подписку.
-
-💳 Продлить: {payment_link}
-
-Будем рады видеть вас снова! 🤗
-"""
+EXPIRY_WARNING_TEXT = "Ваша подписка закончилась!"
