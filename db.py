@@ -171,6 +171,23 @@ def get_active_subscription(user_id: int) -> Optional[Dict]:
         return None
 
 
+def get_all_subscriptions_for_user(user_id: int) -> List[Dict]:
+    """Get all subscriptions (past and current) for a user to display payment history."""
+    client = get_client()
+    if not client:
+        return []
+    try:
+        result = client.table("club_subscriptions") \
+            .select("*") \
+            .eq("user_id", user_id) \
+            .order("paid_at", desc=True) \
+            .execute()
+        return result.data or []
+    except Exception as e:
+        logger.error(f"Error getting subscription history for {user_id}: {e}")
+        return []
+
+
 def is_active_subscriber(user_id: int) -> bool:
     """Check if user has an active subscription."""
     sub = get_active_subscription(user_id)

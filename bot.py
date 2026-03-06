@@ -397,7 +397,31 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             parse_mode="HTML"
         )
     elif data == "cabinet_payments":
-        await query.answer("У вас пока нет истории прошлых платежей в Telegram.", show_alert=True)
+        user_id = update.effective_user.id
+        subs = db.get_all_subscriptions_for_user(user_id)
+        
+        if not subs:
+            await query.answer("У вас пока нет истории платежей.", show_alert=True)
+            return
+            
+        history_text = "💳 <b>История платежей:</b>\n\n"
+        for i, sub in enumerate(subs, 1):
+            date_str = "Неизвестно"
+            if sub.get('paid_at'):
+                try:
+                    dt = datetime.fromisoformat(sub['paid_at'])
+                    date_str = dt.strftime("%d-%m-%Y %H:%M")
+                except ValueError:
+                    date_str = sub['paid_at']
+                    
+            status_emoji = "✅" if sub.get('status') == 'active' else "🔴"
+            status_text = "Активна" if sub.get('status') == 'active' else "Завершена"
+            history_text += f"{i}. <b>{date_str}</b>\n"
+            history_text += f"   Статус: {status_emoji} {status_text}\n"
+            history_text += f"   Оплачено через: {sub.get('payment_source', 'GetCourse')}\n\n"
+            
+        keyboard = [[InlineKeyboardButton("🔙 Назад в кабинет", callback_data="cabinet")]]
+        await query.edit_message_text(text=history_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
     elif data == "cabinet_cancel":
         cancel_text = (
             "<b>Как отменить подписку?</b>\n\n"
