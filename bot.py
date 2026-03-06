@@ -82,19 +82,32 @@ TEXT_WAITLIST_CONFIRM = (
     "Спасибо за интерес! Мы свяжемся с вами, когда откроем двери."
 )
 
-TEXT_CABINET = (
-    "<b>👤 Личный кабинет</b>\n\n"
-    "Здесь информация о вашей подписке.\n\n"
-    "👤 <b>Статус:</b> Активна ✅\n"
-    "📅 <b>Следующее списание:</b> Автоматически через GetCourse\n"
-    "💳 <b>Управление:</b> Через письмо от GetCourse (поиск по 'GetCourse')\n\n"
-    "Если вы захотите приостановить участие, используйте ссылку в письмах об оплате. Но мы будем скучать!"
-)
+def get_cabinet_text(email: str, expires_at: str, renewed_count: int) -> str:
+    """Format the cabinet message with dynamic user data."""
+    if not email:
+        email = "Не указан"
+        
+    date_str = "Нет активной подписки"
+    if expires_at:
+        try:
+            # Try to parse ISO format and make it friendlier DD-MM-YYYY
+            dt = datetime.fromisoformat(expires_at)
+            date_str = dt.strftime("%d-%m-%Y")
+        except ValueError:
+            date_str = expires_at
+
+    return (
+        "👤 <b>Данные вашего аккаунта:</b>\n\n"
+        f"Email, указанный при регистрации:\n{email}\n\n"
+        f"✅ Подписка активна до: <b>{date_str}</b>\n\n"
+        f"Количество платежей: {renewed_count}\n"
+        "Хотите просмотреть детали?"
+    )
 
 TEXT_HELP = (
     "<b>🆘 Нужна помощь?</b>\n\n"
     "Если у вас возникли вопросы или проблемы с оплатой, напишите нам в поддержку:\n\n"
-    "👉 @tymuron"
+    "👉 @annaromeoschool"
 )
 
 TEXT_SUCCESS = (
@@ -144,8 +157,9 @@ def get_join_menu(user_id: int = None):
 
 def get_cabinet_menu():
     keyboard = [
-        [InlineKeyboardButton("📧 Написать в поддержку", url="https://t.me/tymuron")],
-        [InlineKeyboardButton("🔙 Вернуться в меню", callback_data="main")],
+        [InlineKeyboardButton("Смотреть платежи", callback_data="cabinet_payments")],
+        [InlineKeyboardButton("Отменить подписку с автоплатежом", callback_data="cabinet_cancel")],
+        [InlineKeyboardButton("🏠 На главную", callback_data="main")],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -362,11 +376,37 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             parse_mode="HTML"
         )
     elif data == "cabinet":
+        # Fetch user and subscription data
+        user_id = update.effective_user.id
+        user_record = db.get_user(user_id)
+        sub_record = db.get_active_subscription(user_id)
+        
+        email = user_record.get("email") if user_record else None
+        expires_at = sub_record.get("expires_at") if sub_record else None
+        renewed_count = sub_record.get("renewed_count", 0) if sub_record else 0
+        
+        # Determine email fallback: check sub_record if user_record has none
+        if not email and sub_record:
+             email = sub_record.get("email")
+             
+        text = get_cabinet_text(email, expires_at, renewed_count)
+        
         await query.edit_message_text(
-            text=TEXT_CABINET,
+            text=text,
             reply_markup=get_cabinet_menu(),
             parse_mode="HTML"
         )
+    elif data == "cabinet_payments":
+        await query.answer("У вас пока нет истории прошлых платежей в Telegram.", show_alert=True)
+    elif data == "cabinet_cancel":
+        cancel_text = (
+            "<b>Как отменить подписку?</b>\n\n"
+            "Управление подпиской происходит через платформу GetCourse. "
+            "Чтобы отменить автоплатеж, найдите на своей почте письмо об успешной оплате от GetCourse, "
+            "перейдите по ссылке в письме и нажмите «Отменить подписку»."
+        )
+        keyboard = [[InlineKeyboardButton("🔙 Назад в кабинет", callback_data="cabinet")]]
+        await query.edit_message_text(text=cancel_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
     elif data == "help":
         await query.edit_message_text(
             text=TEXT_HELP,
