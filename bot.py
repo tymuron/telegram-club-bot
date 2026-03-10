@@ -725,23 +725,24 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
 
 # --- NEW: Subscribers Command (Admin) ---
 async def subscribers_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """(Admin Only) Shows active subscribers."""
+    """(Admin Only) Shows users who currently have channel access."""
     user_id = update.effective_user.id
     
     if str(user_id) != str(ADMIN_ID):
         return
 
-    subs = db.get_all_active_subscribers()
+    subs = db.get_all_access_subscribers()
     
     if not subs:
-        await update.message.reply_text("📭 Нет активных подписчиков.")
+        await update.message.reply_text("📭 Сейчас нет пользователей с доступом.")
         return
     
-    text = f"<b>👥 Активные подписчики: {len(subs)}</b>\n\n"
+    text = f"<b>👥 Пользователи с доступом: {len(subs)}</b>\n\n"
     for s in subs[:20]:  # Limit to 20 for readability
         expires = datetime.fromisoformat(s['expires_at']).strftime('%d.%m.%Y')
         name = s.get('name') or s.get('email') or f"ID: {s['user_id']}"
-        text += f"• {name} (до {expires})\n"
+        status_label = "grace" if s.get('status') == 'grace_period' else "active"
+        text += f"• {name} ({status_label}, до {expires})\n"
     
     if len(subs) > 20:
         text += f"\n... и ещё {len(subs) - 20} человек"
@@ -1066,7 +1067,7 @@ def main() -> None:
     def get_subscribers_api():
         """Return list of subscriber IDs for broadcast filtering."""
         try:
-            subscribers = db.get_all_active_subscribers()
+            subscribers = db.get_all_access_subscribers()
             subscriber_ids = [s['user_id'] for s in subscribers]
             return jsonify({
                 "status": "ok",
@@ -1445,7 +1446,7 @@ def run():
         def get_subscribers_api():
             """Return list of subscriber IDs for broadcast filtering."""
             try:
-                subscriber_ids = list(db.get_active_subscriber_ids())
+                subscriber_ids = list(db.get_access_subscriber_ids())
                 return jsonify({
                     "count": len(subscriber_ids),
                     "subscriber_ids": subscriber_ids

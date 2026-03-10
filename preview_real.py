@@ -40,8 +40,8 @@ async def preview_broadcast():
             if msg.get("buttons"):
                 btn_text = msg.get("button_text", "Вступить в Клуб")
                 btn_url = msg.get("button_url", "https://annaromeoschool.getcourse.ru/club-pay")
-                # Add test tracking
-                tracked_url = f"{btn_url}?tg_id={TEST_USER_ID}"
+                # Add test tracking using the same parameter as the live bot/GetCourse flow
+                tracked_url = f"{btn_url}?utm_tg_id={TEST_USER_ID}"
                 reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(btn_text, url=tracked_url)]])
 
             # Send

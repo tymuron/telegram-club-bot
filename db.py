@@ -468,10 +468,42 @@ def get_all_active_subscribers() -> List[Dict]:
         return []
 
 
+def get_all_access_subscribers() -> List[Dict]:
+    """Get all subscriptions that currently grant channel access."""
+    client = get_client()
+    if not client:
+        return []
+    try:
+        result = client.table("club_subscriptions") \
+            .select("*") \
+            .in_("status", ["active", "grace_period"]) \
+            .execute()
+        return result.data or []
+    except Exception as e:
+        logger.error(f"Error getting access subs: {e}")
+        return []
+
+
 def get_active_subscriber_ids() -> Set[int]:
     """Get set of user IDs with active subscriptions."""
     subs = get_all_active_subscribers()
     return {s["user_id"] for s in subs}
+
+
+def get_access_subscriber_ids() -> Set[int]:
+    """Get set of user IDs that should currently have channel access."""
+    subs = get_all_access_subscribers()
+    return {s["user_id"] for s in subs}
+
+
+def get_access_subscription_emails() -> Set[str]:
+    """Get normalized emails for users who currently have access."""
+    emails = set()
+    for sub in get_all_access_subscribers():
+        email = (sub.get("email") or "").strip().lower()
+        if email:
+            emails.add(email)
+    return emails
 
 
 # ============================================
@@ -479,7 +511,7 @@ def get_active_subscriber_ids() -> Set[int]:
 # ============================================
 
 def get_non_subscriber_ids() -> Set[int]:
-    """Get user IDs who are NOT active subscribers (for sales campaigns)."""
+    """Get user IDs who currently do NOT have channel access (for sales campaigns)."""
     client = get_client()
     if not client:
         return set()
@@ -491,8 +523,8 @@ def get_non_subscriber_ids() -> Set[int]:
             .execute()
         all_ids = {u["id"] for u in (all_users.data or [])}
         
-        # Remove active subscribers
-        subscriber_ids = get_active_subscriber_ids()
+        # Remove users who currently have channel access
+        subscriber_ids = get_access_subscriber_ids()
         
         return all_ids - subscriber_ids
     except Exception as e:
@@ -501,7 +533,7 @@ def get_non_subscriber_ids() -> Set[int]:
 
 
 def get_reminded_user_ids() -> Set[int]:
-    """Get user IDs who opted into March reminder and are NOT subscribers."""
+    """Get user IDs who opted into March reminder and do NOT currently have access."""
     client = get_client()
     if not client:
         return set()
@@ -513,8 +545,8 @@ def get_reminded_user_ids() -> Set[int]:
             .execute()
         reminded = {u["id"] for u in (result.data or [])}
         
-        # Remove active subscribers
-        subscriber_ids = get_active_subscriber_ids()
+        # Remove users who currently have channel access
+        subscriber_ids = get_access_subscriber_ids()
         
         return reminded - subscriber_ids
     except Exception as e:

@@ -135,8 +135,8 @@ def main():
         
         if user:
             user_id = user['id']
-            active_sub = db.get_active_subscription(user_id)
-            if active_sub:
+            access_sub = db.get_access_subscription(user_id)
+            if access_sub:
                 matched_active.append({**entry, "tg_id": user_id, "action": "already_active"})
             else:
                 db.add_subscription(user_id=user_id, email=email, name=name, source='getcourse_sync')

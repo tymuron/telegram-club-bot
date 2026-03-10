@@ -1,6 +1,6 @@
 
-import json
 import re
+import db
 
 # List of paid names from screenshots
 paid_names = [
@@ -24,8 +24,6 @@ paid_names = [
 ]
 
 waitlist_file = "waitlist.txt"
-subscribers_file = "subscribers.json"
-
 # Load waitlist
 waitlist_users = []
 try:
@@ -79,22 +77,20 @@ print(f"\n❌ NOT FOUND: {len(not_found)}")
 for n in not_found:
     print(f"  - {n}")
 
-# Save to subscribers.json
-existing_subs = {}
-try:
-    with open(subscribers_file, "r") as f:
-        existing_subs = json.load(f)
-except:
-    pass
-
+added = 0
 for f in found:
-    existing_subs[str(f['id'])] = {
-        "chat_id": f['id'],
-        "name": f['name'],
-        "status": "active",
-        "restored": True
-    }
+    if db.has_channel_access(f['id']):
+        print(f"⏩ Already has access: {f['name']} ({f['id']})")
+        continue
+    db.upsert_user(f['id'], {
+        "first_name": f['telegram_name'],
+        "status": "lead",
+    })
+    db.add_subscription(
+        user_id=f['id'],
+        name=f['name'],
+        source="manual_restore",
+    )
+    added += 1
 
-with open(subscribers_file, "w", encoding="utf-8") as f:
-    json.dump(existing_subs, f, indent=2, ensure_ascii=False)
-    print(f"\n💾 Saved {len(existing_subs)} subscribers to {subscribers_file}")
+print(f"\n💾 Restored {added} matched subscribers into Supabase")
