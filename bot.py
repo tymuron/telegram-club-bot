@@ -8,7 +8,7 @@ import asyncio
 from datetime import datetime
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
-from telegram import Update, LabeledPrice, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, LabeledPrice, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, BotCommandScopeChat
 from telegram.ext import Application, CommandHandler, ContextTypes, PreCheckoutQueryHandler, MessageHandler, filters, CallbackQueryHandler, ApplicationBuilder, ChatJoinRequestHandler, ConversationHandler
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -44,7 +44,8 @@ TEXT_WELCOME = (
     "Добро пожаловать домой. Я создала этого бота, чтобы открыть вам дверь в клуб «ТОЧКА ОПОРЫ».\n\n"
     "Это пространство, где мы возвращаем себе чувство опоры. Не через сложные теории, а через простые изменения в вашем доме.\n\n"
     "Здесь вы узнаете, как сделать так, чтобы стены не забирали силы, а заряжали вас.\n\n"
-    "Выберите действие в меню ниже 👇"
+    "Выберите действие в меню ниже 👇\n\n"
+    "<i>Email мы запрашиваем один раз при первом знакомстве. Изменить его можно в Личном кабинете → «Изменить email».</i>"
 )
 
 TEXT_ABOUT = (
@@ -169,6 +170,7 @@ def get_cabinet_menu():
     keyboard = [
         [InlineKeyboardButton("Смотреть платежи", callback_data="cabinet_payments")],
         [InlineKeyboardButton("Отменить подписку с автоплатежом", callback_data="cabinet_cancel")],
+        [InlineKeyboardButton("✏️ Изменить email", callback_data="cabinet_setemail")],
         [InlineKeyboardButton("🏠 На главную", callback_data="main")],
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -354,6 +356,38 @@ async def cancel_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     await update.message.reply_text("Отменено. Без email мы не сможем привязать вашу оплату автоматически. Чтобы попробовать снова, отправьте /start.")
     return ConversationHandler.END
 
+
+# Users who clicked "Изменить email" and are waiting to send their new email
+_awaiting_email_update_ids = set()
+
+
+class _AwaitingEmailUpdateFilter(filters.MessageFilter):
+    """Only pass when user is in the email-update flow from cabinet."""
+    def filter(self, update):
+        return bool(update.effective_user and update.effective_user.id in _awaiting_email_update_ids)
+
+
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Reply to /help with help text and back button."""
+    if not update.message:
+        return
+    await update.message.reply_html(TEXT_HELP, reply_markup=get_back_menu())
+
+
+async def handle_email_update_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle a text message when user is updating their email from cabinet."""
+    user_id = update.effective_user.id
+    if user_id not in _awaiting_email_update_ids:
+        return  # Let other handlers deal with it
+    _awaiting_email_update_ids.discard(user_id)
+    email = update.message.text.strip().lower()
+    if not is_valid_email(email):
+        await update.message.reply_text("❌ Неверный формат email. Введите корректный адрес:")
+        _awaiting_email_update_ids.add(user_id)
+        return
+    db.upsert_user(user_id, {"email": email})
+    await update.message.reply_text("✅ Email обновлён. Спасибо!")
+
 async def _send_welcome_flow(update: Update, context: ContextTypes.DEFAULT_TYPE, user, username) -> None:
     """The original welcome logic moved into a helper."""
     # Send Notification to Admin
@@ -499,6 +533,13 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
         keyboard = [[InlineKeyboardButton("🔙 Назад в кабинет", callback_data="cabinet")]]
         await query.edit_message_text(text=cancel_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    elif data == "cabinet_setemail":
+        _awaiting_email_update_ids.add(query.from_user.id)
+        await query.answer()
+        await query.edit_message_text(
+            "✏️ <b>Изменить email</b>\n\nОтправьте в ответном сообщении ваш новый email (тот, с которым вы оплачиваете на GetCourse):",
+            parse_mode="HTML"
+        )
     elif data == "help":
         await query.edit_message_text(
             text=TEXT_HELP,
@@ -1171,9 +1212,15 @@ def run():
         )
         application.add_handler(conv_handler)
 
+        application.add_handler(CommandHandler("help", help_cmd))
         application.add_handler(CommandHandler("link", link_cmd))
         application.add_handler(CommandHandler("renew", renew_cmd))
         application.add_handler(CommandHandler("kickexpired", kickexpired_cmd))
+        application.add_handler(CommandHandler("subscribers", subscribers_cmd))
+        application.add_handler(CommandHandler("leads", leads))
+        application.add_handler(CommandHandler("testpay", testpay))
+        # Handle "Изменить email" text reply (when user clicked that in cabinet)
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & _AwaitingEmailUpdateFilter(), handle_email_update_message))
 
         application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
         application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
@@ -1185,6 +1232,20 @@ def run():
             """Async function to properly start the bot without signal handlers."""
             await application.initialize()
             await application.start()
+            # Set bot command menu (burger menu) so users/admins see /start and /help etc.
+            user_commands = [
+                BotCommand("start", "Запустить бота / главное меню"),
+                BotCommand("help", "Помощь"),
+            ]
+            await application.bot.set_my_commands(user_commands, scope=None)
+            if ADMIN_ID:
+                admin_commands = user_commands + [
+                    BotCommand("subscribers", "Активные подписчики"),
+                    BotCommand("kickexpired", "Удалить просроченных"),
+                    BotCommand("renew", "Продлить подписку вручную"),
+                    BotCommand("link", "Привязать email к tg_id"),
+                ]
+                await application.bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(int(ADMIN_ID)))
             await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
             logger.info("✅ Bot polling started successfully!")
             # Keep running forever
