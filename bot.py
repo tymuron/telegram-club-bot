@@ -139,8 +139,10 @@ def get_join_menu(user_id: int = None):
     
     if PAYMENT_LINK:
         # Append user's Telegram ID to URL for webhook matching
+        # IMPORTANT: GetCourse webhook is configured to read {{utm_tg_id}},
+        # so we must pass the Telegram ID in the utm_tg_id parameter.
         separator = "&" if "?" in PAYMENT_LINK else "?"
-        tracked_url = f"{PAYMENT_LINK}{separator}tg_id={user_id}" if user_id else PAYMENT_LINK
+        tracked_url = f"{PAYMENT_LINK}{separator}utm_tg_id={user_id}" if user_id else PAYMENT_LINK
         
         # Append user's email if available
         if user_id:
@@ -254,8 +256,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 async def receive_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Gets the email, validates it, and saves it."""
-    email = update.message.text.strip()
+    """Gets the email, validates it, and saves it. Also checks against recovery list."""
+    email = update.message.text.strip().lower()
     user = update.effective_user
     username = f"@{user.username}" if user.username else "No Username"
     
@@ -265,6 +267,64 @@ async def receive_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         
     # Valid email! Save it.
     db.upsert_user(user.id, {"email": email})
+    
+    # ---------------------------------------------------------
+    # AUTOMATIC LOST USER RECOVERY CHECK
+    # ---------------------------------------------------------
+    try:
+        if os.path.exists('recovery_list.json'):
+            with open('recovery_list.json', 'r', encoding='utf-8') as f:
+                recovery_data = json.load(f)
+                
+            if email in recovery_data:
+                lost_user = recovery_data[email]
+                logger.info(f"✨ RECOVERY SUCCESS: {user.first_name} ({email}) was a lost user!")
+                
+                # Grant them 30 days of active subscription
+                db.add_subscription(
+                    user_id=user.id, 
+                    email=email, 
+                    name=lost_user.get('name', user.first_name), 
+                    source='auto_recovery'
+                )
+                
+                # Remove them from the JSON so they don't abuse it
+                del recovery_data[email]
+                with open('recovery_list.json', 'w', encoding='utf-8') as fw:
+                    json.dump(recovery_data, fw, ensure_ascii=False, indent=2)
+                
+                # Send the success message and channel link!
+                await update.message.reply_text(
+                    f"🎉 <b>Ура, {lost_user.get('name', user.first_name)}! Мы вас нашли!</b>\n\n"
+                    f"Ваш email (<code>{email}</code>) успешно привязан к вашей оплате на GetCourse.\n\n"
+                    f"Добро пожаловать в Клуб! Ваша подписка активна.",
+                    parse_mode="HTML"
+                )
+                
+                # Send invite link depending on how it's styled normally
+                if CHANNEL_ID:
+                    try:
+                        invite = await context.bot.create_chat_invite_link(
+                            chat_id=CHANNEL_ID,
+                            member_limit=1,
+                            expire_date=int((datetime.now() + db.timedelta(days=1)).timestamp()),
+                            name=f"Invite for {user.first_name}"
+                        )
+                        keyboard = [[InlineKeyboardButton("🚪 Войти в Клуб", url=invite.invite_link)]]
+                        await update.message.reply_text(
+                            "Нажмите на кнопку ниже, чтобы попасть в закрытый канал.\n\n"
+                            "⚠️ <b>Важно:</b> Ссылка действует 24 часа и только для вас. Не пересылайте её другим.",
+                            reply_markup=InlineKeyboardMarkup(keyboard),
+                            parse_mode="HTML"
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to generate recovery invite link: {e}")
+                
+                return ConversationHandler.END
+    except Exception as e:
+        logger.error(f"Error checking recovery list: {e}")
+    # ---------------------------------------------------------
+    
     await update.message.reply_text("✅ Спасибо! Ваш email сохранен.")
     
     is_reregister = context.user_data.pop('is_reregister', False)
@@ -687,7 +747,7 @@ async def kickexpired_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await context.bot.send_message(
                 chat_id=sub_user_id,
                 text=db.EXPIRY_WARNING_TEXT,
-                reply_markup=_renew_button()
+                reply_markup=_renew_button(sub_user_id)
             )
         except Exception:
             pass  # User may have blocked the bot
@@ -709,7 +769,7 @@ async def kickexpired_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 await context.bot.send_message(
                     chat_id=sub_user_id,
                     text="❌ Вы не продлили подписку. Доступ закрыт.\nЧтобы вернуться — оплатите снова:",
-                    reply_markup=_renew_button()
+                    reply_markup=_renew_button(sub_user_id)
                 )
             except Exception:
                 pass
@@ -757,10 +817,19 @@ async def kickexpired_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 bot_application = None
 
 # --- Scheduler Jobs ---
-def _renew_button():
+def _renew_button(user_id: int = None):
     """Create the inline '✅ ПРОДЛИТЬ ПОДПИСКУ' button."""
     if PAYMENT_LINK:
-        return InlineKeyboardMarkup([[InlineKeyboardButton("✅ ПРОДЛИТЬ ПОДПИСКУ", url=PAYMENT_LINK)]])
+        # Keep the same utm_tg_id convention here so renewals also carry Telegram ID.
+        separator = "&" if "?" in PAYMENT_LINK else "?"
+        tracked_url = f"{PAYMENT_LINK}{separator}utm_tg_id={user_id}" if user_id else PAYMENT_LINK
+        
+        if user_id:
+            user_data = db.get_user(user_id)
+            if user_data and user_data.get("email"):
+                tracked_url += f"&email={user_data['email']}"
+                
+        return InlineKeyboardMarkup([[InlineKeyboardButton("✅ ПРОДЛИТЬ ПОДПИСКУ", url=tracked_url)]])
     return None
 
 async def check_reminders_job():
@@ -776,7 +845,7 @@ async def check_reminders_job():
             await bot_application.bot.send_message(
                 chat_id=sub['user_id'],
                 text=db.REMINDER_TEXT,
-                reply_markup=_renew_button()
+                reply_markup=_renew_button(sub['user_id'])
             )
             db.mark_reminder_sent(sub['id'])
             logger.info(f"📨 Day-27 reminder sent to {sub['user_id']}")
@@ -796,18 +865,40 @@ async def check_tomorrow_reminder_job():
             await bot_application.bot.send_message(
                 chat_id=sub['user_id'],
                 text=db.REMINDER_TOMORROW_TEXT,
-                reply_markup=_renew_button()
+                reply_markup=_renew_button(sub['user_id'])
             )
             logger.info(f"📨 Day-29 reminder sent to {sub['user_id']}")
         except Exception as e:
             logger.error(f"Failed to send tomorrow reminder to {sub['user_id']}: {e}")
 
-async def check_expiries_job():
-    """Job: Send expiry notice + kick expired subscribers."""
+async def check_exact_expiry_job():
+    """Job: Send exact expiry notice and move to grace period."""
     if not bot_application:
         return
         
-    logger.info("⏰ Running expiry check (auto-kick)...")
+    logger.info("⏰ Running exact expiry check (moving to grace period)...")
+    subs = db.get_newly_expired_subscribers()
+    
+    for sub in subs:
+        try:
+            user_id = sub['user_id']
+            await bot_application.bot.send_message(
+                chat_id=user_id,
+                text="⚠️ <b>Ваша подписка закончилась!</b>\n\nМы сохраняем за вами место и даем 3 дня резервного доступа (Grace Period). Пожалуйста, продлите подписку, чтобы мы не закрыли доступ.",
+                reply_markup=_renew_button(user_id),
+                parse_mode="HTML"
+            )
+            db.set_grace_period(sub['id'])
+            logger.info(f"📨 Exact expiry notice sent to {user_id} (Moved to grace_period)")
+        except Exception as e:
+            logger.error(f"Failed to send exact expiry notice to {sub['user_id']}: {e}")
+
+async def check_expiries_job():
+    """Job: Final kick after grace period ends."""
+    if not bot_application:
+        return
+        
+    logger.info("⏰ Running grace period expiry check (auto-kick)...")
     expired = db.get_expired_subscribers()
     
     for sub in expired:
@@ -815,11 +906,12 @@ async def check_expiries_job():
             user_id = sub['user_id']
             name = sub.get('name') or sub.get('email') or str(user_id)
             
-            # Send clean expiry message with renew button
+            # Send final kick message
             await bot_application.bot.send_message(
                 chat_id=user_id,
-                text=db.EXPIRY_WARNING_TEXT,
-                reply_markup=_renew_button()
+                text="❌ <b>Время вышло.</b> Ваш 3-дневный резервный доступ завершен.\n\nДоступ в канал закрыт. Чтобы вернуться, оплатите подписку снова:",
+                reply_markup=_renew_button(user_id),
+                parse_mode="HTML"
             )
             
             # Kick from channel
@@ -993,9 +1085,10 @@ def run():
             asyncio.run(coro_func())
         return wrapper
     
-    scheduler.add_job(run_async_job(check_reminders_job), 'interval', hours=4)  # Every 4 hours
-    scheduler.add_job(run_async_job(check_tomorrow_reminder_job), 'interval', hours=4)  # Every 4 hours
-    scheduler.add_job(run_async_job(check_expiries_job), 'interval', hours=4)  # Every 4 hours
+    scheduler.add_job(run_async_job(check_reminders_job), 'interval', hours=4)  # Every 4 hours (Day 27)
+    scheduler.add_job(run_async_job(check_tomorrow_reminder_job), 'interval', hours=4)  # Every 4 hours (Day 29)
+    scheduler.add_job(run_async_job(check_exact_expiry_job), 'interval', hours=4)  # Every 4 hours (Day 30 - Grace Period)
+    scheduler.add_job(run_async_job(check_expiries_job), 'interval', hours=4)  # Every 4 hours (Day 33 - Kick)
     
     # --- CAMPAIGN AUTOPILOT ---
     # Check for scheduled broadcast messages every minute
@@ -1195,14 +1288,10 @@ def run():
                     async def send_kick():
                         try:
                             # Send clean expiry message with renew button
-                            renew_markup = None
-                            if PAYMENT_LINK:
-                                renew_markup = InlineKeyboardMarkup([[InlineKeyboardButton("✅ ПРОДЛИТЬ ПОДПИСКУ", url=PAYMENT_LINK)]])
-                                
                             await application.bot.send_message(
                                 chat_id=chat_id,
                                 text=db.EXPIRY_WARNING_TEXT,
-                                reply_markup=renew_markup
+                                reply_markup=_renew_button(int(chat_id))
                             )
                             # Kick from channel
                             if CHANNEL_ID:

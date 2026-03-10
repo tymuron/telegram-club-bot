@@ -228,7 +228,7 @@ def mark_reminder_sent(subscription_id: int) -> None:
 
 
 def get_expired_subscribers() -> List[Dict]:
-    """Get active subscriptions past expiry + grace period."""
+    """Get grace_period subscriptions past expiry + grace period ready to be kicked."""
     client = get_client()
     if not client:
         return []
@@ -236,7 +236,7 @@ def get_expired_subscribers() -> List[Dict]:
         grace_cutoff = (datetime.now() - timedelta(days=GRACE_DAYS)).isoformat()
         result = client.table("club_subscriptions") \
             .select("*") \
-            .eq("status", "active") \
+            .eq("status", "grace_period") \
             .lte("expires_at", grace_cutoff) \
             .execute()
         return result.data or []
@@ -244,6 +244,37 @@ def get_expired_subscribers() -> List[Dict]:
         logger.error(f"Error getting expired subs: {e}")
         return []
 
+
+def get_newly_expired_subscribers() -> List[Dict]:
+    """Get active subs where expires_at < now, moving them to grace_period."""
+    client = get_client()
+    if not client:
+        return []
+    try:
+        now = datetime.now().isoformat()
+        result = client.table("club_subscriptions") \
+            .select("*") \
+            .eq("status", "active") \
+            .lt("expires_at", now) \
+            .execute()
+        return result.data or []
+    except Exception as e:
+        logger.error(f"Error getting newly expired subs: {e}")
+        return []
+
+
+def set_grace_period(subscription_id: int) -> None:
+    """Move subscription from active to grace_period."""
+    client = get_client()
+    if not client:
+        return
+    try:
+        client.table("club_subscriptions") \
+            .update({"status": "grace_period"}) \
+            .eq("id", subscription_id) \
+            .execute()
+    except Exception as e:
+        logger.error(f"Error setting grace period: {e}")
 
 def get_subscribers_expiring_tomorrow() -> List[Dict]:
     """Get active subscribers whose subscription expires within 24-48 hours (for Day 29 reminder)."""
@@ -365,15 +396,15 @@ def extend_subscription(user_id: int, days: int) -> bool:
 
 
 def mark_expired(user_id: int) -> None:
-    """Mark all active subscriptions for a user as expired."""
+    """Mark all active/grace subscriptions for a user as expired."""
     client = get_client()
     if not client:
         return
     try:
         client.table("club_subscriptions") \
             .update({"status": "expired"}) \
+            .in_("status", ["active", "grace_period"]) \
             .eq("user_id", user_id) \
-            .eq("status", "active") \
             .execute()
         logger.info(f"🔴 Subscription expired for user {user_id}")
     except Exception as e:
