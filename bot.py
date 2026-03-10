@@ -363,8 +363,8 @@ _awaiting_email_update_ids = set()
 
 class _AwaitingEmailUpdateFilter(filters.MessageFilter):
     """Only pass when user is in the email-update flow from cabinet."""
-    def filter(self, update):
-        return bool(update.effective_user and update.effective_user.id in _awaiting_email_update_ids)
+    def filter(self, message):
+        return bool(message and message.from_user and message.from_user.id in _awaiting_email_update_ids)
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
