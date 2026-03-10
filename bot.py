@@ -5,7 +5,8 @@ import json
 import logging
 import threading
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
+from urllib.parse import urlencode
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 from telegram import Update, LabeledPrice, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, BotCommandScopeChat
@@ -83,7 +84,7 @@ TEXT_WAITLIST_CONFIRM = (
     "Спасибо за интерес! Мы свяжемся с вами, когда откроем двери."
 )
 
-def get_cabinet_text(email: str, expires_at: str, renewed_count: int) -> str:
+def get_cabinet_text(email: str, expires_at: str, renewed_count: int, status: str = "none") -> str:
     """Format the cabinet message with dynamic user data."""
     if not email:
         email = "Не указан"
@@ -100,7 +101,16 @@ def get_cabinet_text(email: str, expires_at: str, renewed_count: int) -> str:
     header = "👤 <b>Данные вашего аккаунта:</b>\n\n"
     email_line = f"Email, указанный при регистрации:\n{email}\n\n"
     
-    if expires_at:
+    if status == "grace_period" and expires_at:
+        try:
+            dt = datetime.fromisoformat(expires_at) + timedelta(days=db.GRACE_DAYS)
+            grace_until = dt.strftime("%d-%m-%Y")
+        except ValueError:
+            grace_until = expires_at
+        sub_line = f"🕊 Резервный доступ сохранён до: <b>{grace_until}</b>\n\n"
+        payments_line = f"Количество платежей: {renewed_count}\n"
+        hint = "Продлите подписку ниже, чтобы мы не закрыли доступ после резервного периода."
+    elif expires_at:
         sub_line = f"✅ Подписка активна до: <b>{date_str}</b>\n\n"
         payments_line = f"Количество платежей: {renewed_count}\n"
         hint = "Ниже вы можете посмотреть историю платежей или отменить автоплатёж."
@@ -127,6 +137,38 @@ TEXT_SUCCESS = (
 )
 
 # --- KEYBOARDS ---
+def build_payment_url(user_id: int = None) -> str | None:
+    """Build a payment link that GetCourse can map back to Telegram."""
+    if not PAYMENT_LINK:
+        return None
+
+    if not user_id:
+        return PAYMENT_LINK
+
+    params = {"utm_tg_id": user_id}
+    user_data = db.get_user(user_id)
+    if user_data and user_data.get("email"):
+        params["email"] = user_data["email"]
+
+    separator = "&" if "?" in PAYMENT_LINK else "?"
+    return f"{PAYMENT_LINK}{separator}{urlencode(params)}"
+
+
+async def create_personal_invite_markup(bot, user_id: int, first_name: str):
+    """Create a single-use invite link that expires in 24 hours."""
+    if not CHANNEL_ID:
+        return None
+
+    invite = await bot.create_chat_invite_link(
+        chat_id=CHANNEL_ID,
+        member_limit=1,
+        expire_date=int((datetime.now() + timedelta(days=1)).timestamp()),
+        name=f"Invite for {first_name or user_id}"
+    )
+    keyboard = [[InlineKeyboardButton("🚪 Войти в Клуб", url=invite.invite_link)]]
+    return InlineKeyboardMarkup(keyboard)
+
+
 def get_main_menu():
     keyboard = [
         [InlineKeyboardButton("🕯 О Клубе (Что внутри?)", callback_data="about")],
@@ -147,18 +189,7 @@ def get_join_menu(user_id: int = None):
     keyboard = []
     
     if PAYMENT_LINK:
-        # Append user's Telegram ID to URL for webhook matching
-        # IMPORTANT: GetCourse webhook is configured to read {{utm_tg_id}},
-        # so we must pass the Telegram ID in the utm_tg_id parameter.
-        separator = "&" if "?" in PAYMENT_LINK else "?"
-        tracked_url = f"{PAYMENT_LINK}{separator}utm_tg_id={user_id}" if user_id else PAYMENT_LINK
-        
-        # Append user's email if available
-        if user_id:
-            user_data = db.get_user(user_id)
-            if user_data and user_data.get("email"):
-                tracked_url += f"&email={user_data['email']}"
-                
+        tracked_url = build_payment_url(user_id)
         keyboard.append([InlineKeyboardButton("💳 Оплатить и вступить", url=tracked_url)])
     else:
         keyboard.append([InlineKeyboardButton("🙋‍♀️ Хочу в клуб! (Лист ожидания)", callback_data="join_waitlist")])
@@ -222,12 +253,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     
     user_record = db.get_user(user.id)
     has_email = user_record and user_record.get("email")
-    is_active = db.is_active_subscriber(user.id)
+    has_access = db.has_channel_access(user.id)
 
-    if is_active:
+    if has_access:
         if has_email:
-            text = "Ваши данные обновлены. Спасибо, что остаетесь с нами в Клубе! 🤍"
-            await update.message.reply_text(text)
+            await _send_welcome_flow(update, context, user, username)
             return ConversationHandler.END
         else:
             context.user_data['is_reregister'] = True
@@ -239,10 +269,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     if is_reregister:
         if has_email:
-            # Not natively tracked as active, but they have an email.
-            # Reregistering them makes them active when they hit receive_email.
-            text = "Ваши данные обновлены. Спасибо, что остаетесь с нами в Клубе! 🤍"
-            await update.message.reply_text(text)
+            await _send_welcome_flow(update, context, user, username)
             return ConversationHandler.END
         else:
             # Complete stranger clicking VIP link
@@ -314,17 +341,11 @@ async def receive_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
                 # Send invite link depending on how it's styled normally
                 if CHANNEL_ID:
                     try:
-                        invite = await context.bot.create_chat_invite_link(
-                            chat_id=CHANNEL_ID,
-                            member_limit=1,
-                            expire_date=int((datetime.now() + db.timedelta(days=1)).timestamp()),
-                            name=f"Invite for {user.first_name}"
-                        )
-                        keyboard = [[InlineKeyboardButton("🚪 Войти в Клуб", url=invite.invite_link)]]
+                        reply_markup = await create_personal_invite_markup(context.bot, user.id, user.first_name)
                         await update.message.reply_text(
                             "Нажмите на кнопку ниже, чтобы попасть в закрытый канал.\n\n"
                             "⚠️ <b>Важно:</b> Ссылка действует 24 часа и только для вас. Не пересылайте её другим.",
-                            reply_markup=InlineKeyboardMarkup(keyboard),
+                            reply_markup=reply_markup,
                             parse_mode="HTML"
                         )
                     except Exception as e:
@@ -339,12 +360,11 @@ async def receive_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     
     is_reregister = context.user_data.pop('is_reregister', False)
     
-    # Check if they are already an active subscriber (e.g. from reregister link)
-    is_subscriber = db.is_active_subscriber(user.id)
+    # Check if they currently have access already (e.g. active or grace period)
+    has_access = db.has_channel_access(user.id)
     
-    if is_subscriber or is_reregister:
-        text = "Ваши данные обновлены. Спасибо, что остаетесь с нами в Клубе! 🤍"
-        await update.message.reply_text(text)
+    if has_access or is_reregister:
+        await _send_welcome_flow(update, context, user, username)
         return ConversationHandler.END
     
     # Proceed to normal welcome flow if not a current subscriber and didn't use reregister link
@@ -386,7 +406,15 @@ async def handle_email_update_message(update: Update, context: ContextTypes.DEFA
         _awaiting_email_update_ids.add(user_id)
         return
     db.upsert_user(user_id, {"email": email})
-    await update.message.reply_text("✅ Email обновлён. Спасибо!")
+    sub_record = db.get_access_subscription(user_id)
+    expires_at = sub_record.get("expires_at") if sub_record else None
+    renewed_count = sub_record.get("renewed_count", 0) if sub_record else 0
+    status = sub_record.get("status", "none") if sub_record else "none"
+    cabinet_text = get_cabinet_text(email, expires_at, renewed_count, status=status)
+    await update.message.reply_html(
+        f"✅ Email обновлён.\n\n{cabinet_text}",
+        reply_markup=get_cabinet_menu()
+    )
 
 async def _send_welcome_flow(update: Update, context: ContextTypes.DEFAULT_TYPE, user, username) -> None:
     """The original welcome logic moved into a helper."""
@@ -407,13 +435,13 @@ async def _send_welcome_flow(update: Update, context: ContextTypes.DEFAULT_TYPE,
     now = datetime.now()
     march_1 = datetime(2026, 3, 1)
     
-    # Check if user is already a subscriber
-    is_subscriber = db.is_active_subscriber(user.id)
+    # Check if user currently has access (active or grace period)
+    has_access = db.has_channel_access(user.id)
     
     # message could be from update.message or update.callback_query.message if called from elsewhere
     message_target = update.message if update.message else update.callback_query.message
     
-    if now < march_1 and not is_subscriber:
+    if now < march_1 and not has_access:
         # BEFORE March 1: Show closed-club message with remind button
         closed_text = load_text("messages/msg_closed_club.txt")
         if not closed_text:
@@ -481,7 +509,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         # Fetch user and subscription data
         user_id = update.effective_user.id
         user_record = db.get_user(user_id)
-        sub_record = db.get_active_subscription(user_id)
+        sub_record = db.get_access_subscription(user_id)
         
         email = user_record.get("email") if user_record else None
         expires_at = sub_record.get("expires_at") if sub_record else None
@@ -491,7 +519,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         if not email and sub_record:
              email = sub_record.get("email")
              
-        text = get_cabinet_text(email, expires_at, renewed_count)
+        status = sub_record.get("status", "none") if sub_record else "none"
+        text = get_cabinet_text(email, expires_at, renewed_count, status=status)
         
         await query.edit_message_text(
             text=text,
@@ -675,17 +704,15 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
     # 1. Send Success Message with Invite Button
     try:
         # Create Invite Link
-        invite_link = await context.bot.create_chat_invite_link(
-            chat_id=CHANNEL_ID,
-            member_limit=1,
-            name=f"Sub: {update.effective_user.first_name}"
+        reply_markup = await create_personal_invite_markup(
+            context.bot,
+            update.effective_user.id,
+            update.effective_user.first_name
         )
-        
-        keyboard = [[InlineKeyboardButton("🚪 Войти в «Точка опоры»", url=invite_link.invite_link)]]
         
         await update.message.reply_html(
             TEXT_SUCCESS,
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            reply_markup=reply_markup
         )
         
         logger.info(f"Generated invite link for user {update.effective_user.id}")
@@ -869,15 +896,7 @@ bot_application = None
 def _renew_button(user_id: int = None):
     """Create the inline '✅ ПРОДЛИТЬ ПОДПИСКУ' button."""
     if PAYMENT_LINK:
-        # Keep the same utm_tg_id convention here so renewals also carry Telegram ID.
-        separator = "&" if "?" in PAYMENT_LINK else "?"
-        tracked_url = f"{PAYMENT_LINK}{separator}utm_tg_id={user_id}" if user_id else PAYMENT_LINK
-        
-        if user_id:
-            user_data = db.get_user(user_id)
-            if user_data and user_data.get("email"):
-                tracked_url += f"&email={user_data['email']}"
-                
+        tracked_url = build_payment_url(user_id)
         return InlineKeyboardMarkup([[InlineKeyboardButton("✅ ПРОДЛИТЬ ПОДПИСКУ", url=tracked_url)]])
     return None
 
@@ -929,15 +948,15 @@ async def check_exact_expiry_job():
     subs = db.get_newly_expired_subscribers()
     
     for sub in subs:
+        user_id = sub['user_id']
+        db.set_grace_period(sub['id'])
         try:
-            user_id = sub['user_id']
             await bot_application.bot.send_message(
                 chat_id=user_id,
                 text="⚠️ <b>Ваша подписка закончилась!</b>\n\nМы сохраняем за вами место и даем 3 дня резервного доступа (Grace Period). Пожалуйста, продлите подписку, чтобы мы не закрыли доступ.",
                 reply_markup=_renew_button(user_id),
                 parse_mode="HTML"
             )
-            db.set_grace_period(sub['id'])
             logger.info(f"📨 Exact expiry notice sent to {user_id} (Moved to grace_period)")
         except Exception as e:
             logger.error(f"Failed to send exact expiry notice to {sub['user_id']}: {e}")
@@ -963,6 +982,8 @@ async def check_expiries_job():
                 parse_mode="HTML"
             )
             
+            kick_succeeded = True
+
             # Kick from channel
             if CHANNEL_ID:
                 try:
@@ -970,12 +991,14 @@ async def check_expiries_job():
                     await bot_application.bot.unban_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
                     logger.info(f"🚫 Auto-kicked expired user {user_id} from channel")
                 except Exception as e:
+                    kick_succeeded = False
                     logger.error(f"Failed to kick {user_id} from channel: {e}")
             
-            db.mark_expired(user_id)
+            if kick_succeeded or not CHANNEL_ID:
+                db.mark_subscription_expired(sub['id'])
             
             # Notify Admin
-            if ADMIN_ID:
+            if ADMIN_ID and (kick_succeeded or not CHANNEL_ID):
                 await bot_application.bot.send_message(
                     chat_id=ADMIN_ID,
                     text=f"🚫 <b>Автоматическое удаление</b>\n\n👤 {name} (ID: <code>{user_id}</code>)\nПодписка истекла → удалён из канала.",
@@ -1094,18 +1117,17 @@ def main() -> None:
                         try:
                             if CHANNEL_ID and bot_application:
                                 # Create invite link
-                                invite = await bot_application.bot.create_chat_invite_link(
-                                    chat_id=CHANNEL_ID,
-                                    member_limit=1,
-                                    name=f"User {chat_id}"
+                                reply_markup = await create_personal_invite_markup(
+                                    bot_application.bot,
+                                    int(chat_id),
+                                    user_name
                                 )
                                 # Send success message with invite link
-                                keyboard = [[InlineKeyboardButton("🚪 Войти в Клуб", url=invite.invite_link)]]
                                 await bot_application.bot.send_message(
                                     chat_id=chat_id,
                                     text=TEXT_SUCCESS,
                                     parse_mode="HTML",
-                                    reply_markup=InlineKeyboardMarkup(keyboard)
+                                    reply_markup=reply_markup
                                 )
                                 logger.info(f"✅ Invite link sent to {chat_id}")
                             
@@ -1187,8 +1209,8 @@ def run():
             
             logger.info(f"🔔 Received join request from {user_id} for chat {chat_id}")
             
-            # Check if user is in our subscribers database (Supabase)
-            is_valid = db.is_active_subscriber(user_id)
+            # Check if user currently has channel access in Supabase
+            is_valid = db.has_channel_access(user_id)
             
             if is_valid:
                 logger.info(f"✅ Auto-approving {user_id} (Found in Supabase)")
@@ -1300,9 +1322,9 @@ def run():
                     except ImportError:
                         pass
                 
-                # METHOD 2: Direct tg_id (fallback)
+                # METHOD 2: Direct tg_id/utm_tg_id (fallback)
                 if not chat_id:
-                    chat_id = get_field('tg_id')
+                    chat_id = get_field('tg_id') or get_field('utm_tg_id')
                 
                 # Get other fields
                 status = (get_field('status') or '').lower()
@@ -1336,17 +1358,16 @@ def run():
                     # 2. Send Telegram Invite (using global application)
                     async def send_invite():
                         try:
-                            invite = await application.bot.create_chat_invite_link(
-                                chat_id=CHANNEL_ID,
-                                member_limit=1,
-                                name=f"User {chat_id}"
+                            reply_markup = await create_personal_invite_markup(
+                                application.bot,
+                                int(chat_id),
+                                name or str(chat_id)
                             )
-                            keyboard = [[InlineKeyboardButton("🚪 Войти в Клуб", url=invite.invite_link)]]
                             await application.bot.send_message(
                                 chat_id=chat_id,
                                 text=TEXT_SUCCESS,
                                 parse_mode="HTML",
-                                reply_markup=InlineKeyboardMarkup(keyboard)
+                                reply_markup=reply_markup
                             )
                             # Notify Admin
                             if ADMIN_ID:

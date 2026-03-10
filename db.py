@@ -117,11 +117,12 @@ def add_subscription(user_id: int, email: str = None, name: str = None,
             "email": email,
         })
         
-        # Expire any previous active subscription
+        # Expire any previous access-bearing subscription before inserting a fresh one.
+        # This prevents stale grace_period rows from later kicking renewed users.
         client.table("club_subscriptions") \
             .update({"status": "expired"}) \
             .eq("user_id", user_id) \
-            .eq("status", "active") \
+            .in_("status", ["active", "grace_period"]) \
             .execute()
         
         # Count previous subscriptions for renewed_count
@@ -171,6 +172,26 @@ def get_active_subscription(user_id: int) -> Optional[Dict]:
         return None
 
 
+def get_access_subscription(user_id: int) -> Optional[Dict]:
+    """Get the newest subscription that still grants channel access."""
+    client = get_client()
+    if not client:
+        return None
+    try:
+        result = client.table("club_subscriptions") \
+            .select("*") \
+            .eq("user_id", user_id) \
+            .in_("status", ["active", "grace_period"]) \
+            .order("paid_at", desc=True) \
+            .limit(1) \
+            .maybe_single() \
+            .execute()
+        return result.data if result else None
+    except Exception as e:
+        logger.error(f"Error getting access subscription for {user_id}: {e}")
+        return None
+
+
 def get_all_subscriptions_for_user(user_id: int) -> List[Dict]:
     """Get all subscriptions (past and current) for a user to display payment history."""
     client = get_client()
@@ -191,6 +212,12 @@ def get_all_subscriptions_for_user(user_id: int) -> List[Dict]:
 def is_active_subscriber(user_id: int) -> bool:
     """Check if user has an active subscription."""
     sub = get_active_subscription(user_id)
+    return sub is not None
+
+
+def has_channel_access(user_id: int) -> bool:
+    """Check if user should currently have access to the channel."""
+    sub = get_access_subscription(user_id)
     return sub is not None
 
 
@@ -371,12 +398,12 @@ def get_expired_not_warned() -> List[Dict]:
 
 
 def extend_subscription(user_id: int, days: int) -> bool:
-    """Extend the expiration date of an active subscription."""
+    """Extend the expiration date of the current access-bearing subscription."""
     client = get_client()
     if not client:
         return False
     try:
-        sub = get_active_subscription(user_id)
+        sub = get_access_subscription(user_id)
         if not sub:
             return False
         
@@ -409,6 +436,20 @@ def mark_expired(user_id: int) -> None:
         logger.info(f"🔴 Subscription expired for user {user_id}")
     except Exception as e:
         logger.error(f"Error marking expired: {e}")
+
+
+def mark_subscription_expired(subscription_id: int) -> None:
+    """Mark one specific subscription row as expired."""
+    client = get_client()
+    if not client:
+        return
+    try:
+        client.table("club_subscriptions") \
+            .update({"status": "expired"}) \
+            .eq("id", subscription_id) \
+            .execute()
+    except Exception as e:
+        logger.error(f"Error marking subscription {subscription_id} expired: {e}")
 
 
 def get_all_active_subscribers() -> List[Dict]:
@@ -562,7 +603,7 @@ def parse_getcourse_webhook(data: dict) -> Optional[Dict]:
     """Parse GetCourse webhook payload. Returns {chat_id, email, name, status}."""
     try:
         utm_params = data.get("utm", {})
-        tg_id = utm_params.get("tg_id") or data.get("tg_id")
+        tg_id = utm_params.get("tg_id") or data.get("utm_tg_id") or data.get("tg_id")
         
         fields = data.get("fields", {})
         if not tg_id:
