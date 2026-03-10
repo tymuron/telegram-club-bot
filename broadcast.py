@@ -87,8 +87,10 @@ async def broadcast_message(message_config, target_users):
             keyboard_rows = []
             
             if btn_text and base_url:
+                # Use the same utm_tg_id convention as in the main bot,
+                # so GetCourse can reliably link payments to Telegram IDs.
                 separator = "&" if "?" in base_url else "?"
-                tracked_url = f"{base_url}{separator}tg_id={user_id}"
+                tracked_url = f"{base_url}{separator}utm_tg_id={user_id}"
                 keyboard_rows.append([InlineKeyboardButton(btn_text, url=tracked_url)])
             
             if has_support_button:

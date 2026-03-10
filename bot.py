@@ -87,7 +87,7 @@ def get_cabinet_text(email: str, expires_at: str, renewed_count: int) -> str:
     if not email:
         email = "Не указан"
         
-    date_str = "Нет активной подписки"
+    date_str = "нет активной подписки"
     if expires_at:
         try:
             # Try to parse ISO format and make it friendlier DD-MM-YYYY
@@ -96,18 +96,26 @@ def get_cabinet_text(email: str, expires_at: str, renewed_count: int) -> str:
         except ValueError:
             date_str = expires_at
 
-    return (
-        "👤 <b>Данные вашего аккаунта:</b>\n\n"
-        f"Email, указанный при регистрации:\n{email}\n\n"
-        f"✅ Подписка активна до: <b>{date_str}</b>\n\n"
-        f"Количество платежей: {renewed_count}\n"
-        "Хотите просмотреть детали?"
-    )
+    header = "👤 <b>Данные вашего аккаунта:</b>\n\n"
+    email_line = f"Email, указанный при регистрации:\n{email}\n\n"
+    
+    if expires_at:
+        sub_line = f"✅ Подписка активна до: <b>{date_str}</b>\n\n"
+        payments_line = f"Количество платежей: {renewed_count}\n"
+        hint = "Ниже вы можете посмотреть историю платежей или отменить автоплатёж."
+    else:
+        sub_line = "🔴 <b>Сейчас активной подписки нет.</b>\n\n"
+        payments_line = ""
+        hint = "Нажмите «Вступить в Клуб» в главном меню, чтобы оформить доступ."
+    
+    return header + email_line + sub_line + payments_line + hint
 
 TEXT_HELP = (
     "<b>🆘 Нужна помощь?</b>\n\n"
-    "Если у вас возникли вопросы или проблемы с оплатой, напишите нам в поддержку:\n\n"
-    "👉 @annaromeoschool"
+    "Если у вас возникли вопросы по клубу, доступу или оплате:\n\n"
+    "1️⃣ Проверьте, что вы оплатили с тем же email, который указали боту.\n"
+    "2️⃣ Если оплата прошла, но ссылка не пришла — напишите нам, приложив скрин оплаты.\n\n"
+    "👉 Поддержка: @annaromeoschool"
 )
 
 TEXT_SUCCESS = (
@@ -946,6 +954,29 @@ def main() -> None:
         
     application = Application.builder().token(BOT_TOKEN).build()
     bot_application = application  # Store reference for scheduler
+
+    # Set bot command menu ("burger menu") for users
+    async def setup_commands(app: Application) -> None:
+        from telegram import BotCommand
+        commands = [
+            BotCommand("start", "Запустить бота / главное меню"),
+            BotCommand("help", "Получить помощь"),
+        ]
+        admin_commands = [
+            BotCommand("subscribers", "Показать активных подписчиков"),
+            BotCommand("kickexpired", "Проверить и удалить просроченных"),
+            BotCommand("renew", "Ручное продление подписки"),
+            BotCommand("link", "Привязать email к tg_id"),
+        ]
+        # Global user commands
+        await app.bot.set_my_commands(commands, scope=None)
+        # Admin‑only menu (shown in chat with admin)
+        if ADMIN_ID:
+            from telegram import BotCommandScopeChat
+            await app.bot.set_my_commands(commands + admin_commands, scope=BotCommandScopeChat(int(ADMIN_ID)))
+
+    # Run command setup once on startup
+    application.post_init = setup_commands
 
     # Handlers
     application.add_handler(CommandHandler("start", start))
