@@ -768,16 +768,27 @@ async def link_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"✅ Email {email} привязан к ID {target_id}")
 
 async def renew_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """(Admin Only) Manually add/renew a subscription."""
+    """For users: show payment/join screen. For admin: /renew [tg_id или email] to grant access."""
     user_id = update.effective_user.id
-    if str(user_id) != str(ADMIN_ID):
+    is_admin = str(user_id) == str(ADMIN_ID)
+    args = (context.args or []) if context.args else []
+
+    # Normal user: show payment / join screen (same as "Вступить в Клуб")
+    if not is_admin:
+        if not update.message:
+            return
+        await update.message.reply_text(
+            text=TEXT_JOIN,
+            reply_markup=get_join_menu(user_id=user_id),
+            parse_mode="HTML"
+        )
         return
-        
-    args = context.args
+
+    # Admin with no args: show usage
     if len(args) != 1:
         await update.message.reply_text("Использование: /renew [tg_id или email]")
         return
-        
+
     target = args[0]
     target_id = None
     
@@ -1024,6 +1035,7 @@ def main() -> None:
         commands = [
             BotCommand("start", "Запустить бота / главное меню"),
             BotCommand("help", "Получить помощь"),
+            BotCommand("renew", "Оплатить / продлить подписку"),
         ]
         admin_commands = [
             BotCommand("subscribers", "Показать активных подписчиков"),
@@ -1257,6 +1269,7 @@ def run():
             user_commands = [
                 BotCommand("start", "Запустить бота / главное меню"),
                 BotCommand("help", "Помощь"),
+                BotCommand("renew", "Оплатить / продлить подписку"),
             ]
             await application.bot.set_my_commands(user_commands, scope=None)
             if ADMIN_ID:
