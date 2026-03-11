@@ -135,7 +135,7 @@ TEXT_SUCCESS = (
 )
 
 # --- KEYBOARDS ---
-def build_payment_url(user_id: int = None) -> str | None:
+def build_payment_url(user_id: int = None):
     """Build a payment link that GetCourse can map back to Telegram."""
     if not PAYMENT_LINK:
         return None
@@ -143,9 +143,18 @@ def build_payment_url(user_id: int = None) -> str | None:
     if not user_id:
         return PAYMENT_LINK
 
+    user_data = db.get_user(user_id) or {}
     params = {"utm_tg_id": user_id}
-    user_data = db.get_user(user_id)
-    if user_data and user_data.get("email"):
+
+    # Attach a stable one-time token so GetCourse can return it in the
+    # payment callback even if UTM/session fields are unreliable.
+    try:
+        import payment_tokens as pt
+        params["token"] = pt.generate_token(user_id, name=user_data.get("first_name"))
+    except Exception as e:
+        logger.error(f"Failed to generate payment token for {user_id}: {e}")
+
+    if user_data.get("email"):
         params["email"] = user_data["email"]
 
     separator = "&" if "?" in PAYMENT_LINK else "?"
@@ -1208,9 +1217,11 @@ def run():
         asyncio.set_event_loop(loop)
         logger.info("🤖 Starting Telegram Bot Polling...")
         
-        # Initialize Application
+        # Initialize Application (shared with scheduler jobs and webhook)
         global application
+        global bot_application
         application = ApplicationBuilder().token(BOT_TOKEN).build()
+        bot_application = application
 
         async def approve_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             """Auto-approves join requests for paid subscribers."""
@@ -1299,29 +1310,28 @@ def run():
         # ON RENDER: Run Flask in Main Thread (Blocking)
         logger.info(f"🚀 STARTING FLASK ON MAIN THREAD PORT: {port}")
         
-        # Determine Webhook Path
-        WEBHOOK_PATH = f"/webhook/{BOT_TOKEN}"
-        
         app = Flask(__name__)
         
-        @app.route(WEBHOOK_PATH, methods=['GET', 'POST'])
-        @app.route('/webhook/payment', methods=['POST'])
+        @app.route('/webhook/payment', methods=['GET', 'POST'])
         def webhook():
-             """Handle incoming GetCourse payments."""
+             """Handle incoming GetCourse payment callbacks."""
              try:
-                # Log everything for debugging
-                logger.info(f"📥 Webhook received: Headers={dict(request.headers)}")
-                logger.info(f"📥 Webhook form: {dict(request.form)}")
-                logger.info(f"📥 Webhook args: {dict(request.args)}")
+                # GetCourse sends GET or POST; data can be in URL params, form body, or JSON
+                # Merge all sources into one dict (args first, then form, then json)
+                data = {}
+                if request.args:
+                    data.update({k: v for k, v in request.args.items()})
+                if request.form:
+                    data.update({k: v for k, v in request.form.items()})
+                if request.is_json and request.get_json(silent=True):
+                    data.update(request.get_json())
                 
-                # Get field from all possible sources
-                def get_field(name):
-                    return (request.form.get(name) or 
-                            request.headers.get(name) or 
-                            request.args.get(name) or
-                            ((request.get_json() or {}).get(name) if request.is_json else None))
+                logger.info(f"📥 GetCourse webhook received: {dict(data)}")
                 
-                # GetCourse may send literal "{{order.status}}" etc. if variables aren't substituted — treat as missing
+                # Empty request (e.g. GET health check) - return OK
+                if not data and request.method == 'GET':
+                    return jsonify({"status": "ok", "message": "Webhook endpoint ready"}), 200
+                
                 def _raw(val):
                     if val is None: return None
                     s = (val if isinstance(val, str) else str(val)).strip()
@@ -1329,48 +1339,57 @@ def run():
                 def _substituted(val):
                     raw = _raw(val)
                     if not raw: return None
-                    if "{{" in raw and "}}" in raw:
-                        return None  # unsubstituted template
+                    if "{{" in str(raw) and "}}" in str(raw):
+                        return None  # unsubstituted GetCourse template
                     return raw
                 
-                # METHOD 1: Token-based lookup (preferred - works with GetCourse)
-                token = get_field('token')
-                chat_id = None
+                def get_val(*keys):
+                    """Try multiple key names (GetCourse uses object.user.email, etc.)."""
+                    for k in keys:
+                        v = data.get(k)
+                        if v is not None:
+                            return _substituted(v)
+                    return None
                 
-                if token and token.startswith('tok_'):
+                # METHOD 1: Token-based lookup
+                token = get_val('token')
+                chat_id = None
+                if token and str(token).startswith('tok_'):
                     try:
                         import payment_tokens as pt
                         chat_id = pt.lookup_token(token)
                         if chat_id:
-                            logger.info(f"🎫 Token {token} resolved to user {chat_id}")
+                            logger.info(f"🎫 Token resolved to user {chat_id}")
                     except ImportError:
                         pass
                 
-                # METHOD 2: Direct tg_id / utm_tg_id (GetCourse may send either)
+                # METHOD 2: Telegram ID (GetCourse may pass utm_tg_id from payment link)
                 if not chat_id:
-                    for f in ('tg_id', 'utm_tg_id', 'telegram_id', 'user_id'):
-                        v = _substituted(get_field(f))
+                    for key in ('tg_id', 'utm_tg_id', 'telegram_id', 'user_id', 
+                                'create_session_utm_tg_id'):
+                        v = get_val(key)
                         if v:
-                            chat_id = v
-                            break
+                            try:
+                                chat_id = int(v)
+                                logger.info(f"🎫 Found tg_id from {key}")
+                                break
+                            except (TypeError, ValueError):
+                                pass
                 
-                # Get other fields; reject unsubstituted GetCourse templates (e.g. {{user.email}})
-                status_raw = _substituted(get_field('status'))
+                # Email (object.user.email, user_email, mail, email)
+                email = (get_val('email', 'user_email', 'mail', 'object_user_email') or '').lower() or None
+                name = get_val('name', 'first_name', 'object_user_first_name', 'user_name')
+                status_raw = get_val('status', 'order_status', 'object_status')
                 status = (status_raw or '').lower() or None
-                email = (_substituted(get_field('email')) or '').lower() or None
-                name = _substituted(get_field('name'))
                 
-                form_has_templates = any(
-                    "{{" in str(v) and "}}" in str(v) for v in (request.form or {}).values()
-                )
-                if form_has_templates:
+                if any("{{" in str(v) and "}}" in str(v) for v in data.values()):
                     logger.warning(
-                        "⚠️ GetCourse sent literal template variables (e.g. {{order.status}}) instead of real values. "
-                        "In GetCourse automation, use merge fields so values are substituted. "
-                        "For tg_id use the UTM that contains Telegram ID (e.g. utm_tg_id), not utm_source."
+                        "⚠️ GetCourse sent unsubstituted template vars. "
+                        "In GetCourse process: use {object.user.email}, {object.status}, "
+                        "and pass utm_tg_id via payment link UTM. URL: api_url/?tg_id={object.user.telegram_id}&email={object.user.email}&status={object.status}"
                     )
                 
-                # METHOD 3: Email matching via Supabase (critical fallback if GetCourse doesn't pass tg_id)
+                # METHOD 3: Email matching via Supabase (critical fallback)
                 if not chat_id and email:
                     user = db.get_user_by_email(email)
                     if user:
@@ -1416,15 +1435,19 @@ def run():
                         source='getcourse'
                     )
 
-                    # 2. Send Telegram Invite (using global application)
+                    # 2. Send Telegram Invite (use bot_application set by run_telegram_bot)
                     async def send_invite():
+                        app = bot_application or application
+                        if not app:
+                            logger.error("Bot not ready yet, invite not sent")
+                            return
                         try:
                             reply_markup = await create_personal_invite_markup(
-                                application.bot,
+                                app.bot,
                                 int(chat_id),
                                 name or str(chat_id)
                             )
-                            await application.bot.send_message(
+                            await app.bot.send_message(
                                 chat_id=chat_id,
                                 text=TEXT_SUCCESS,
                                 parse_mode="HTML",
@@ -1432,7 +1455,7 @@ def run():
                             )
                             # Notify Admin
                             if ADMIN_ID:
-                                await application.bot.send_message(
+                                await app.bot.send_message(
                                     chat_id=ADMIN_ID,
                                     text=f"💰 New Payment!\n{name}\nID: {chat_id}"
                                 )
@@ -1459,24 +1482,27 @@ def run():
                     db.mark_expired(int(chat_id))
                     logger.info(f"🚫 Webhook: User {chat_id} subscription expired/cancelled")
                     
+                    app = bot_application or application
                     async def send_kick():
+                        if not app:
+                            return
                         try:
                             # Send clean expiry message with renew button
-                            await application.bot.send_message(
+                            await app.bot.send_message(
                                 chat_id=chat_id,
                                 text=db.EXPIRY_WARNING_TEXT,
                                 reply_markup=_renew_button(int(chat_id))
                             )
                             # Kick from channel
                             if CHANNEL_ID:
-                                await application.bot.ban_chat_member(chat_id=CHANNEL_ID, user_id=chat_id)
-                                await application.bot.unban_chat_member(chat_id=CHANNEL_ID, user_id=chat_id)
+                                await app.bot.ban_chat_member(chat_id=CHANNEL_ID, user_id=chat_id)
+                                await app.bot.unban_chat_member(chat_id=CHANNEL_ID, user_id=chat_id)
                                 logger.info(f"🚫 Auto-kicked {chat_id} from channel via Webhook")
                                 
                             # Notify Admin
                             if ADMIN_ID:
                                 name_str = name or str(chat_id)
-                                await application.bot.send_message(
+                                await app.bot.send_message(
                                     chat_id=ADMIN_ID,
                                     text=f"🚫 <b>Удаление (вебхук GC)</b>\n👤 {name_str} (ID: <code>{chat_id}</code>)",
                                     parse_mode="HTML"

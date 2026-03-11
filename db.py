@@ -164,9 +164,9 @@ def get_active_subscription(user_id: int) -> Optional[Dict]:
             .eq("status", "active") \
             .order("paid_at", desc=True) \
             .limit(1) \
-            .maybe_single() \
             .execute()
-        return result.data if result else None
+        rows = result.data or []
+        return rows[0] if rows else None
     except Exception as e:
         logger.error(f"Error getting subscription for {user_id}: {e}")
         return None
@@ -178,15 +178,16 @@ def get_access_subscription(user_id: int) -> Optional[Dict]:
     if not client:
         return None
     try:
+        # Avoid maybe_single() - it sends Accept that causes 406 when 0 rows
         result = client.table("club_subscriptions") \
             .select("*") \
             .eq("user_id", user_id) \
             .in_("status", ["active", "grace_period"]) \
             .order("paid_at", desc=True) \
             .limit(1) \
-            .maybe_single() \
             .execute()
-        return result.data if result else None
+        rows = result.data or []
+        return rows[0] if rows else None
     except Exception as e:
         logger.error(f"Error getting access subscription for {user_id}: {e}")
         return None

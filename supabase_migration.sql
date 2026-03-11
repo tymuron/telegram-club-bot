@@ -23,8 +23,9 @@ CREATE TABLE IF NOT EXISTS club_subscriptions (
   user_id BIGINT NOT NULL REFERENCES club_users(id) ON DELETE CASCADE,
   paid_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   expires_at TIMESTAMPTZ NOT NULL,
-  status TEXT DEFAULT 'active',               -- active, expired
+  status TEXT DEFAULT 'active',               -- active, grace_period, expired
   reminder_sent BOOLEAN DEFAULT FALSE,
+  warned_at TIMESTAMPTZ,                      -- when user was warned about expiry (Phase 1 kick)
   payment_source TEXT DEFAULT 'getcourse',    -- getcourse, manual, telegram_pay
   renewed_count INT DEFAULT 1,
   email TEXT,

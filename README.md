@@ -1,8 +1,8 @@
 # Telegram Bot for Paid Club Access
 
-This bot greets users, sends an invoice for membership, and automatically grants a single-use invite link upon successful payment.
+This bot greets users, collects email, links payments from GetCourse, and grants single-use channel invite links.
 
-## Setup Guide
+## Quick setup
 
 ### 1. Create the Bot
 1. Open Telegram and search for **@BotFather**.
@@ -46,8 +46,16 @@ This bot greets users, sends an invoice for membership, and automatically grants
    python bot.py
    ```
 
+## GetCourse webhook
+
+Configure GetCourse to POST to `https://YOUR-APP.onrender.com/webhook/payment` when an order is paid. See [GETCOURSE_SETUP.md](GETCOURSE_SETUP.md).
+
+## Database
+
+1. Run `supabase_migration.sql` in Supabase SQL Editor (first-time setup).
+2. If you already have the base schema, run `supabase_migration_grace_period.sql` to add `warned_at`.
+
 ## Usage
-- User sends `/start` -> Bot greets.
-- User sends `/buy` -> Bot sends invoice.
-- User pays -> Bot verifies payload and payment.
-- Bot sends **Invite Link**.
+- User sends `/start` -> Bot asks for email, shows menu.
+- User clicks "Вступить в Клуб" -> Goes to GetCourse payment page.
+- GetCourse sends webhook on payment -> Bot adds subscription, sends invite link.
