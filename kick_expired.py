@@ -24,6 +24,15 @@ PAYMENT_LINK = os.getenv("PAYMENT_LINK")
 
 import db
 
+
+def _build_payment_url(user_id: int):
+    """Payment link with user's Telegram ID so GetCourse can link the payment."""
+    if not PAYMENT_LINK or not user_id:
+        return PAYMENT_LINK
+    sep = "&" if "?" in PAYMENT_LINK else "?"
+    return f"{PAYMENT_LINK}{sep}utm_tg_id={user_id}"
+
+
 async def mass_kick():
     from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
     
@@ -40,15 +49,18 @@ async def mass_kick():
     kicked = 0
     failed = 0
     already_gone = 0
-    
-    renew_markup = None
-    if PAYMENT_LINK:
-        renew_markup = InlineKeyboardMarkup([[InlineKeyboardButton("✅ ПРОДЛИТЬ ПОДПИСКУ", url=PAYMENT_LINK)]])
-    
+
     for sub in expired:
         user_id = sub['user_id']
         name = sub.get('name') or sub.get('email') or str(user_id)
-        
+
+        renew_markup = None
+        renew_url = _build_payment_url(user_id)
+        if renew_url:
+            renew_markup = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("✅ ПРОДЛИТЬ ПОДПИСКУ", url=renew_url)]]
+            )
+
         # Send expiry notice
         try:
             await bot.send_message(

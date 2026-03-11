@@ -23,8 +23,6 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN")
 PAYMENT_PROVIDER_TOKEN_INTL = os.getenv("PAYMENT_PROVIDER_TOKEN_INTL")
-PAYMENT_PROVIDER_TOKEN_INTL = os.getenv("PAYMENT_PROVIDER_TOKEN_INTL")
-PAYMENT_PROVIDER_TOKEN_INTL = os.getenv("PAYMENT_PROVIDER_TOKEN_INTL")
 PAYMENT_LINK = os.getenv("PAYMENT_LINK") # Link to Payment Page (GetCourse)
 WAITLIST_LINK = os.getenv("WAITLIST_LINK")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
@@ -1310,6 +1308,18 @@ def run():
                             request.args.get(name) or
                             ((request.get_json() or {}).get(name) if request.is_json else None))
                 
+                # GetCourse may send literal "{{order.status}}" etc. if variables aren't substituted — treat as missing
+                def _raw(val):
+                    if val is None: return None
+                    s = (val if isinstance(val, str) else str(val)).strip()
+                    return s or None
+                def _substituted(val):
+                    raw = _raw(val)
+                    if not raw: return None
+                    if "{{" in raw and "}}" in raw:
+                        return None  # unsubstituted template
+                    return raw
+                
                 # METHOD 1: Token-based lookup (preferred - works with GetCourse)
                 token = get_field('token')
                 chat_id = None
@@ -1323,27 +1333,64 @@ def run():
                     except ImportError:
                         pass
                 
-                # METHOD 2: Direct tg_id/utm_tg_id (fallback)
+                # METHOD 2: Direct tg_id / utm_tg_id (GetCourse may send either)
                 if not chat_id:
-                    chat_id = get_field('tg_id') or get_field('utm_tg_id')
+                    for f in ('tg_id', 'utm_tg_id', 'telegram_id', 'user_id'):
+                        v = _substituted(get_field(f))
+                        if v:
+                            chat_id = v
+                            break
                 
-                # Get other fields
-                status = (get_field('status') or '').lower()
-                email = get_field('email')
-                name = get_field('name')
+                # Get other fields; reject unsubstituted GetCourse templates (e.g. {{user.email}})
+                status_raw = _substituted(get_field('status'))
+                status = (status_raw or '').lower() or None
+                email = (_substituted(get_field('email')) or '').lower() or None
+                name = _substituted(get_field('name'))
                 
-                # METHOD 3: Email matching via Supabase (new fallback)
+                form_has_templates = any(
+                    "{{" in str(v) and "}}" in str(v) for v in (request.form or {}).values()
+                )
+                if form_has_templates:
+                    logger.warning(
+                        "⚠️ GetCourse sent literal template variables (e.g. {{order.status}}) instead of real values. "
+                        "In GetCourse automation, use merge fields so values are substituted. "
+                        "For tg_id use the UTM that contains Telegram ID (e.g. utm_tg_id), not utm_source."
+                    )
+                
+                # METHOD 3: Email matching via Supabase (critical fallback if GetCourse doesn't pass tg_id)
                 if not chat_id and email:
                     user = db.get_user_by_email(email)
                     if user:
                         chat_id = user['id']
                         logger.info(f"🔄 Matched payment to user {chat_id} by email: {email}")
                 
+                # Coerce chat_id to int if it came as string
+                if chat_id is not None:
+                    try:
+                        chat_id = int(chat_id)
+                    except (TypeError, ValueError):
+                        chat_id = None
+                
                 logger.info(f"💰 Parsed: token={token}, tg_id={chat_id}, status={status}, email={email}")
                 
                 if not chat_id:
-                     # Just return OK for general status updates that don't concern us
-                     return jsonify({"status": "ignored", "reason": "no token or tg_id"}), 200
+                    if status in ['completed', 'paid', 'оплачен', 'завершен', 'success'] and (email or name):
+                        logger.warning(f"⚠️ UNLINKED PAYMENT: status={status} email={email} name={name} — no tg_id and no match by email. Ask user to /start and enter this email, then use /renew.")
+                        if ADMIN_ID:
+                            try:
+                                from telegram import Bot
+                                bot = Bot(token=BOT_TOKEN)
+                                asyncio.run(bot.send_message(
+                                    ADMIN_ID,
+                                    f"⚠️ <b>Оплата без привязки к Telegram</b>\n\n"
+                                    f"GetCourse прислал оплату, но не передал tg_id и в базе нет пользователя с этим email.\n\n"
+                                    f"Email: <code>{email or '—'}</code>\nИмя: {name or '—'}\n\n"
+                                    f"Попросите клиента написать боту /start и ввести этот email, затем выдайте доступ: /renew email",
+                                    parse_mode="HTML"
+                                ))
+                            except Exception as e:
+                                logger.error(f"Failed to notify admin of unlinked payment: {e}")
+                    return jsonify({"status": "ignored", "reason": "no token or tg_id"}), 200
                 
                 logger.info(f"💰 Payment Webhook: ID={chat_id} Status={status} Email={email}")
                 
